@@ -30,3 +30,4 @@ vastbase/
 check_polardb_backup.sh
 check_ssh_permission.sh
 rdb_info_collect.sh
+check_aiopool_usage.py
