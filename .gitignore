@@ -17,3 +17,16 @@ __pycache__/
 
 # 打包临时文件
 *.tar.gz
+
+# 本地其他脚本（不上传到 GitHub）
+alert/
+common/
+dm/
+goldendb/
+mysql/
+oracle/
+tdsql/
+vastbase/
+check_polardb_backup.sh
+check_ssh_permission.sh
+rdb_info_collect.sh
