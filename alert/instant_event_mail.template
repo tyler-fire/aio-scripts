@@ -1,0 +1,39 @@
+<html>
+	<body>
+		<div>
+			<div>
+				<span>告警名称：</span>
+				<span>{{rule.name}}</span>
+			</div>
+			<div>
+				<span>告警级别：</span>
+				<span>{{rule.level.description}}</span>
+			</div>
+			<div>
+				<span>告警时间：</span>
+				<span>{{trigger_datetime.strftime('%Y-%m-%d %H:%M:%S')}}</span>
+			</div>
+			<div>
+				<span>告警内容：</span>
+				<span>{{content}}</span>
+			</div>
+		</div>
+		<div>
+			<div>详情信息：</div>
+			<div>
+				<ul>
+					<li><span>事件ID：</span><span>{{query.event_id}}</span></li>
+					<li><span>事件级别：</span><span>{{query.level}}</span></li>
+					<li><span>事件时间：</span><span>{{query.event_date.strftime('%Y-%m-%d %H:%M:%S')}}</span></li>
+					<li><span>事件消息：</span><span>{{query.message}}</span></li>
+				</ul>
+			</div>
+		</div>
+		<div>
+			<p>
+			    <span>详细信息：</span>
+			    <span><a href="url">{{url}}</a></span>
+			</p>
+		</div>
+	</body>
+</html>
