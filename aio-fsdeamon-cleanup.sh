@@ -1,7 +1,13 @@
 #!/bin/bash
-# 版本: 1.0.0
+# 版本: 1.1.0
 #
 # fsdeamon 监控数据源清理工具
+#
+# 用法：
+#   ./aio-fsdeamon-cleanup.sh [IP]
+#
+#   不带参数: 连接本地 fsdeamon (127.0.0.1)
+#   带 IP 参数: 连接指定 IP 的 fsdeamon
 #
 # 作用：
 #   交互式列出 fsdeamon 管理的所有在线/离线数据源，允许用户按序号/范围/全部
@@ -24,8 +30,14 @@
 ARCH=$(uname -m)
 FS_CLI="/opt/aio/airflow/tools/fs-tools/$ARCH/fsclient/fs-cli"
 FS_CLI_DIR=$(dirname "$FS_CLI")
-HOST="127.0.0.1"
 PORT="8901"
+
+# 解析参数
+if [ -n "$1" ]; then
+    HOST="$1"
+else
+    HOST="127.0.0.1"
+fi
 
 export LD_LIBRARY_PATH="$FS_CLI_DIR/lib_x86_64:$LD_LIBRARY_PATH"
 
@@ -45,8 +57,13 @@ echo
 
 # fs-cli --method=list-source → 查询 worker 上所有已注册的数据源
 SOURCE_RESPONSE=$($FS_CLI --host=$HOST --port=$PORT --method=list-source 2>&1) || {
-    echo "  错误: 无法连接 fsdeamon ($HOST:$PORT)"
-    echo "  请先启动 fsdeamon 服务: rdb start fsdeamon"
+    if [ "$HOST" = "127.0.0.1" ]; then
+        echo "  错误: 本地未运行 fsdeamon 服务"
+        echo "  请先启动: rdb start fsdeamon"
+    else
+        echo "  错误: 无法连接 $HOST 的 fsdeamon 服务 ($HOST:$PORT)"
+        echo "  请确认目标主机 fsdeamon 服务已启动"
+    fi
     exit 1
 }
 
