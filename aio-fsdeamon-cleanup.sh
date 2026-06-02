@@ -45,7 +45,8 @@ echo
 
 # fs-cli --method=list-source → 查询 worker 上所有已注册的数据源
 SOURCE_RESPONSE=$($FS_CLI --host=$HOST --port=$PORT --method=list-source 2>&1) || {
-    echo "  错误: 无法连接 fsdeamon"
+    echo "  错误: 无法连接 fsdeamon ($HOST:$PORT)"
+    echo "  请先启动 fsdeamon 服务: rdb start fsdeamon"
     exit 1
 }
 
