@@ -52,19 +52,6 @@ if ! command -v python3 &>/dev/null; then
 fi
 
 echo
-echo ">>> 启动: fsdeamon清理"
-echo "----------------------------------------"
-
-# 如果没有传入 IP 参数，交互式询问
-if [ "$HOST" = "127.0.0.1" ]; then
-    read -rp "请输入Worker IP (直接回车使用本地): " INPUT_IP
-    if [ -n "$INPUT_IP" ]; then
-        HOST="$INPUT_IP"
-    fi
-fi
-
-echo "正在查询 $HOST 上的数据源 ..."
-echo
 
 # ═══════════════ 1. 获取数据源列表 ═══════════════
 
