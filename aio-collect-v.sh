@@ -1,5 +1,5 @@
 #!/bin/bash
-# 版本: 1.1.0
+# 版本: 1.2.0
 # ======================================================
 # AIO 工具版本收集脚本
 # 用法: ./aio-collect-v.sh [IP1 IP2 ...]
@@ -27,14 +27,26 @@ RPC_BIN="${TOOLS_PATH}/rpc/${LOCAL_ARCH}/rpc"
 
 # 工具定义: 名称|本地命令|远程命令
 TOOL_DEFS=(
+    "aio-oss|${TOOLS_PATH}/aio-oss/${LOCAL_ARCH}/aio-oss --version|${TOOLS_PATH}/aio-oss/{arch}/aio-oss --version"
     "aio-speed|${TOOLS_PATH}/rpc/${LOCAL_ARCH}/aio-speed --version|${TOOLS_PATH}/rpc/{arch}/aio-speed --version"
     "aio-speedd|${TOOLS_PATH}/rpc/${LOCAL_ARCH}/aio-speedd --version|${TOOLS_PATH}/rpc/{arch}/aio-speedd --version"
+    "dm_ftp|echo 未安装|echo 未安装"
+    "fs-cli|cd ${TOOLS_PATH}/fs-tools/${LOCAL_ARCH}/fsclient && ./fs-cli -v|cd ${TOOLS_PATH}/fs-tools/{arch}/fsclient && ./fs-cli -v"
+    "fsdeamon|cd ${TOOLS_PATH}/fs-tools/${LOCAL_ARCH}/fsdeamon && ./fsdeamon -V 2>&1|cd ${TOOLS_PATH}/fs-tools/{arch}/fsdeamon && ./fsdeamon -V 2>&1"
+    "gmssl|${TOOLS_PATH}/gmssl/${LOCAL_ARCH}/gmssl version|${TOOLS_PATH}/gmssl/{arch}/gmssl version"
+    "obk_ftp|${TOOLS_PATH}/obk_ftp/${LOCAL_ARCH}/FileTransferAgent --version|${TOOLS_PATH}/obk_ftp/{arch}/FileTransferAgent --version"
     "zfsdeamon|cd ${TOOLS_PATH}/s3-tools/${LOCAL_ARCH}/zfsdeamon && ./zfsdeamon --version|cd ${TOOLS_PATH}/s3-tools/{arch}/zfsdeamon && ./zfsdeamon --version"
     "afs-cli|cd ${TOOLS_PATH}/s3-tools/${LOCAL_ARCH}/afs && ./afs-cli --version 2>&1|cd ${TOOLS_PATH}/s3-tools/{arch}/afs && ./afs-cli --version 2>&1"
     "afsd|cd ${TOOLS_PATH}/s3-tools/${LOCAL_ARCH}/afs && ./afsd --version x 2>&1|cd ${TOOLS_PATH}/s3-tools/{arch}/afs && ./afsd --version x 2>&1"
+    "s3fs|${TOOLS_PATH}/s3-tools/${LOCAL_ARCH}/s3fs --version 2>&1 | grep -oE 'V[0-9]+\.[0-9]+' | head -1|${TOOLS_PATH}/s3-tools/{arch}/s3fs --version 2>&1 | grep -oE 'V[0-9]+\.[0-9]+' | head -1"
     "s3-tool|cd ${TOOLS_PATH}/s3-tools/${LOCAL_ARCH}/s3-tool && ./s3-tool --version|cd ${TOOLS_PATH}/s3-tools/{arch}/s3-tool && ./s3-tool --version"
-    "fsdeamon|cd ${TOOLS_PATH}/fs-tools/${LOCAL_ARCH}/fsdeamon && ./fsdeamon -V 2>&1|cd ${TOOLS_PATH}/fs-tools/{arch}/fsdeamon && ./fsdeamon -V 2>&1"
-    "fs-cli|cd ${TOOLS_PATH}/fs-tools/${LOCAL_ARCH}/fsclient && ./fs-cli --version|cd ${TOOLS_PATH}/fs-tools/{arch}/fsclient && ./fs-cli --version"
+    "lsof|/usr/bin/lsof -v 2>&1 | grep -oE 'revision: [0-9]+\.[0-9]+\.[0-9]+' | head -1|/usr/bin/lsof -v 2>&1 | grep -oE 'revision: [0-9]+\.[0-9]+\.[0-9]+' | head -1"
+    "rdbcomm|${TOOLS_PATH}/rdbcomm/${LOCAL_ARCH}/rdbcomm --version 2>&1|${TOOLS_PATH}/rdbcomm/{arch}/rdbcomm --version 2>&1"
+    "rdbcommd|${TOOLS_PATH}/rdbcomm/${LOCAL_ARCH}/rdbcommd --version 2>&1|${TOOLS_PATH}/rdbcomm/{arch}/rdbcommd --version 2>&1"
+    "xtrabackup2.4|/opt/aio/airflow/percona-xtrabackup-2.4.17-Linux-x86_64/bin/xtrabackup --version 2>&1 | grep -oE 'version [0-9]+\.[0-9]+\.[0-9]+' | head -1|/opt/aio/airflow/percona-xtrabackup-2.4.17-Linux-x86_64/bin/xtrabackup --version 2>&1 | grep -oE 'version [0-9]+\.[0-9]+\.[0-9]+' | head -1"
+    "xtrabackup8.0|/opt/aio/airflow/percona-xtrabackup-8.0.26-Linux-x86_64/bin/xtrabackup --version 2>&1 | grep -oE 'version [0-9]+\.[0-9]+\.[0-9]+' | head -1|/opt/aio/airflow/percona-xtrabackup-8.0.26-Linux-x86_64/bin/xtrabackup --version 2>&1 | grep -oE 'version [0-9]+\.[0-9]+\.[0-9]+' | head -1"
+    "s3file|${TOOLS_PATH}/s3tools/${LOCAL_ARCH}/s3file --version 2>&1|${TOOLS_PATH}/s3tools/{arch}/s3file --version 2>&1"
+    "s3mount|${TOOLS_PATH}/s3tools/${LOCAL_ARCH}/s3mount --version 2>&1|${TOOLS_PATH}/s3tools/{arch}/s3mount --version 2>&1"
 )
 
 # 从 aio.env 读取配置
@@ -61,7 +73,7 @@ get_local_version() {
     local ver
     ver=$(eval "${cmd}" 2>&1) || true
     # 清理版本号（去掉前缀文字，只保留数字和点）
-    echo "${ver}" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 || echo "未安装"
+    echo "${ver}" | grep -oE '[0-9]+\.[0-9]+\.?[0-9]*\.?[0-9]*' | head -1 || echo "未安装"
 }
 
 # 获取远程单个工具版本
@@ -72,7 +84,8 @@ get_remote_version() {
     local real_cmd="${cmd//\{arch\}/${arch}}"
     local ver
     ver=$("${RPC_BIN}" -h "${host}" -p "${RPC_PORT}" -c "${real_cmd}" 2>&1) || true
-    echo "${ver}" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 || echo "未安装"
+    # 清理版本号（去掉前缀文字，只保留数字和点）
+    echo "${ver}" | grep -oE '[0-9]+\.[0-9]+\.?[0-9]*\.?[0-9]*' | head -1 || echo "未安装"
 }
 
 # 获取远程主机架构
@@ -83,7 +96,7 @@ get_remote_arch() {
 
 # 主流程
 main() {
-    local local_ip
+    local local_ip=""
     local all_ips=()
     local ip_labels=()
     declare -A versions  # versions[ip,tool]=version
