@@ -30,7 +30,6 @@ TOOL_DEFS=(
     "aio-oss|${TOOLS_PATH}/aio-oss/${LOCAL_ARCH}/aio-oss --version|${TOOLS_PATH}/aio-oss/{arch}/aio-oss --version"
     "aio-speed|${TOOLS_PATH}/rpc/${LOCAL_ARCH}/aio-speed --version|${TOOLS_PATH}/rpc/{arch}/aio-speed --version"
     "aio-speedd|${TOOLS_PATH}/rpc/${LOCAL_ARCH}/aio-speedd --version|${TOOLS_PATH}/rpc/{arch}/aio-speedd --version"
-    "dm_ftp|echo 未安装|echo 未安装"
     "fs-cli|cd ${TOOLS_PATH}/fs-tools/${LOCAL_ARCH}/fsclient && ./fs-cli -v|cd ${TOOLS_PATH}/fs-tools/{arch}/fsclient && ./fs-cli -v"
     "fsdeamon|cd ${TOOLS_PATH}/fs-tools/${LOCAL_ARCH}/fsdeamon && ./fsdeamon -V 2>&1|cd ${TOOLS_PATH}/fs-tools/{arch}/fsdeamon && ./fsdeamon -V 2>&1"
     "gmssl|${TOOLS_PATH}/gmssl/${LOCAL_ARCH}/gmssl version|${TOOLS_PATH}/gmssl/{arch}/gmssl version"
@@ -45,8 +44,6 @@ TOOL_DEFS=(
     "rdbcommd|${TOOLS_PATH}/rdbcomm/${LOCAL_ARCH}/rdbcommd --version 2>&1|${TOOLS_PATH}/rdbcomm/{arch}/rdbcommd --version 2>&1"
     "xtrabackup2.4|/opt/aio/airflow/percona-xtrabackup-2.4.17-Linux-x86_64/bin/xtrabackup --version 2>&1 | grep -oE 'version [0-9]+\.[0-9]+\.[0-9]+' | head -1|/opt/aio/airflow/percona-xtrabackup-2.4.17-Linux-x86_64/bin/xtrabackup --version 2>&1 | grep -oE 'version [0-9]+\.[0-9]+\.[0-9]+' | head -1"
     "xtrabackup8.0|/opt/aio/airflow/percona-xtrabackup-8.0.26-Linux-x86_64/bin/xtrabackup --version 2>&1 | grep -oE 'version [0-9]+\.[0-9]+\.[0-9]+' | head -1|/opt/aio/airflow/percona-xtrabackup-8.0.26-Linux-x86_64/bin/xtrabackup --version 2>&1 | grep -oE 'version [0-9]+\.[0-9]+\.[0-9]+' | head -1"
-    "s3file|${TOOLS_PATH}/s3tools/${LOCAL_ARCH}/s3file --version 2>&1|${TOOLS_PATH}/s3tools/{arch}/s3file --version 2>&1"
-    "s3mount|${TOOLS_PATH}/s3tools/${LOCAL_ARCH}/s3mount --version 2>&1|${TOOLS_PATH}/s3tools/{arch}/s3mount --version 2>&1"
 )
 
 # 从 aio.env 读取配置
