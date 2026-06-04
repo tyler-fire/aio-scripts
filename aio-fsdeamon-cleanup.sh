@@ -1,5 +1,5 @@
 #!/bin/bash
-# 版本: 1.4.0
+# 版本: 1.5.0
 #
 # fsdeamon 监控数据源清理工具
 #
@@ -305,21 +305,48 @@ except Exception:
     fi
 
     # fs-cli --method=del-source → 删除数据源（仅 worker 侧记录）
-    # 等价于手工命令：fs-cli --host=127.0.0.1 --port=8901 --source-name=<uuid> --method=del-source --source=<host>:6611
-    DEL_RESULT=$(fs_cli_call del-source "$uuid" "$source_arg" 2>&1)
-    DEL_OK=$(echo "$DEL_RESULT" | python3 -c "
+    # 注意：del-source 返回 result:true 不代表真的删掉了，离线 source 可能只是标记了但没清理完。
+    #       必须再次调用 list-source 确认 source 真的不在了才算成功。
+    MAX_RETRY=5
+    DELETE_OK="false"
+    for ((attempt=1; attempt<=MAX_RETRY; attempt++)); do
+        DEL_RESULT=$(fs_cli_call del-source "$uuid" "$source_arg" 2>&1)
+
+        # 删除后等一下再验证，给 fsdeamon 内部状态同步的时间
+        sleep 1
+
+        # 调用 list-source 验证 source 是否真的不在了
+        VERIFY=$(fs_cli_call list-source 2>&1)
+        STILL_THERE=$(echo "$VERIFY" | python3 -c "
 import sys, json
 try:
     d = json.load(sys.stdin)
-    print('true' if str(d.get('result')).lower() == 'true' else 'false')
+    items = d.get('childDataInfoList', []) or []
+    names = [i.get('source_name', '') for i in items]
+    print('true' if '$uuid' in names else 'false')
 except Exception:
-    print('false')
+    print('unknown')
 " 2>/dev/null)
 
-    if [ "$DEL_OK" = "true" ]; then
-        echo "    ✅ 数据源删除成功"
-    else
-        echo "    ❌ 数据源删除失败: $DEL_RESULT"
+        if [ "$STILL_THERE" = "false" ]; then
+            DELETE_OK="true"
+            if [ "$attempt" -gt 1 ]; then
+                echo "    ✅ 数据源删除成功（第 $attempt 次尝试后确认）"
+            else
+                echo "    ✅ 数据源删除成功"
+            fi
+            break
+        fi
+
+        if [ "$attempt" -lt "$MAX_RETRY" ]; then
+            echo "    ⚠ 第 $attempt 次删除后 source 仍在，重试中..."
+            sleep 1
+        fi
+    done
+
+    if [ "$DELETE_OK" != "true" ]; then
+        echo "    ❌ 数据源删除失败（已重试 $MAX_RETRY 次，source 仍在 list-source 中）"
+        echo "    原始返回: $DEL_RESULT"
     fi
 done
 
