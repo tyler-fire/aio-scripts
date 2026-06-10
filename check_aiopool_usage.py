@@ -1,5 +1,6 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
+# 版本: 1.0.1
 """从Server端通过RPC统计Worker节点上aiopool的磁盘空间占用"""
 
 import sys
@@ -42,70 +43,64 @@ if os.path.exists(env_file):
                 DB_CONFIG["database"] = line.split("=", 1)[1].strip()
 
 
-def get_rpc_for_host(host):
-    """根据目标主机架构选择对应的rpc工具"""
-    local_arch = os.uname().machine
-    local_rpc = "{}/{}/rpc".format(RPC_BASE, local_arch)
-    
-    # 先用本地rpc尝试获取远程架构
-    try:
-        r = subprocess.run(
-            '{} -h {} -p 6611 -c "uname -m"'.format(local_rpc, host),
-            shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10
-        )
-        if r.returncode == 0:
-            remote_arch = r.stdout.decode().strip()
-            if remote_arch != local_arch:
-                remote_rpc = "{}/{}/rpc".format(RPC_BASE, remote_arch)
-                if os.path.exists(remote_rpc):
-                    return remote_rpc
-    except Exception:
-        pass
-    
-    return local_rpc
-
-
 def rpc(host, cmd):
-    rpc_tool = get_rpc_for_host(host)
+    # rpc 客户端始终在本机(Server)上执行, 通过 6611 端口连到 Worker 上的 agent
+    # 由 agent 在远端执行命令并回传结果。因此选择哪个架构的 rpc 二进制只取决于
+    # 本机(Server)架构, 与远端 Worker 架构无关。
     r = subprocess.run(
-        '{} -h {} -p 6611 -c "{}"'.format(rpc_tool, host, cmd),
+        '{} -h {} -p 6611 -c "{}"'.format(RPC, host, cmd),
         shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30
     )
     return r.returncode, r.stdout.decode().strip()
 
 
 def discover_workers():
-    """通过Celery inspect发现Worker节点
+    """发现Worker节点: 优先通过Celery, 失败则直接查MySQL"""
 
-    Celery inspect返回的是worker的queue名(如1770639255303),
-    需要通过aio_data_nodes表把queue名映射到IP.
-    """
-    if not BROKER_URL:
-        return []
+    # 方式1: 通过Celery inspect发现活跃Worker
+    if BROKER_URL:
+        python_bin = "{}/airflow/bin/python3".format(AIO_HOME)
+        if not os.path.exists(python_bin):
+            python_bin = sys.executable
 
-    python_bin = "{}/airflow/bin/python3".format(AIO_HOME)
-    if not os.path.exists(python_bin):
-        python_bin = sys.executable
+        script = (
+            "from celery import Celery; "
+            "app = Celery(broker='{}'); "
+            "active = app.control.inspect(timeout=5).active_queues() or {{}}; "
+            "print('\\n'.join(n.split('@',1)[-1] for n in sorted(active)))"
+        ).format(BROKER_URL)
 
-    script = (
-        "from celery import Celery; "
-        "app = Celery(broker='{}'); "
-        "active = app.control.inspect(timeout=5).active_queues() or {{}}; "
-        "print('\\n'.join(n.split('@',1)[-1] for n in sorted(active)))"
-    ).format(BROKER_URL)
+        queues = []
+        try:
+            r = subprocess.run([python_bin, "-c", script],
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
+            if r.returncode == 0 and r.stdout.decode().strip():
+                queues = [n.strip() for n in r.stdout.decode().strip().split('\n') if n.strip()]
+        except Exception:
+            pass
 
-    queues = []
-    try:
-        r = subprocess.run([python_bin, "-c", script],
-                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
-        if r.returncode == 0 and r.stdout.decode().strip():
-            queues = [n.strip() for n in r.stdout.decode().strip().split('\n') if n.strip()]
-    except Exception:
-        pass
+        if queues:
+            mysql_cmd = [
+                "/usr/local/mysql/bin/mysql",
+                "-h", DB_CONFIG.get("host", SERVER_IP),
+                "-P", DB_CONFIG.get("port", "3306"),
+                "-u", DB_CONFIG.get("user", "root"),
+                "-p{}".format(DB_CONFIG.get("password", "")),
+                "-N", DB_CONFIG.get("database", "aio"), "-e",
+                "SELECT sys_dn_ipaddr FROM aio_data_nodes WHERE sys_dn_queue IN ({}) AND worker_type = 2 AND sys_dn_is_delete = 0".format(
+                    ",".join("'{}'".format(q) for q in queues)
+                )
+            ]
+            try:
+                r = subprocess.run(mysql_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15)
+                if r.returncode == 0 and r.stdout.decode().strip():
+                    ips = [ip.strip() for ip in r.stdout.decode().strip().split('\n') if ip.strip()]
+                    if ips:
+                        return list(dict.fromkeys(ips))
+            except Exception:
+                pass
 
-    if not queues:
-        return []
-
+    # 方式2: 直接查MySQL获取所有Worker IP
     mysql_cmd = [
         "/usr/local/mysql/bin/mysql",
         "-h", DB_CONFIG.get("host", SERVER_IP),
@@ -113,11 +108,8 @@ def discover_workers():
         "-u", DB_CONFIG.get("user", "root"),
         "-p{}".format(DB_CONFIG.get("password", "")),
         "-N", DB_CONFIG.get("database", "aio"), "-e",
-        "SELECT sys_dn_ipaddr FROM aio_data_nodes WHERE sys_dn_queue IN ({}) AND worker_type = 2 AND sys_dn_is_delete = 0".format(
-            ",".join("'{}'".format(q) for q in queues)
-        )
+        "SELECT DISTINCT sys_dn_ipaddr FROM aio_data_nodes WHERE worker_type = 2 AND sys_dn_is_delete = 0"
     ]
-
     try:
         r = subprocess.run(mysql_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15)
         if r.returncode == 0 and r.stdout.decode().strip():
@@ -125,6 +117,7 @@ def discover_workers():
             return list(dict.fromkeys(ips))
     except Exception:
         pass
+
     return []
 
 
