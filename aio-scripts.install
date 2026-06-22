@@ -45,6 +45,7 @@ CORE_TOOLS=(
     "aio-unlock-tasks.py"
     "aio-collect-v.sh"
     "check_aiopool_usage.py"
+    "ops"
 )
 
 # 复制核心工具
