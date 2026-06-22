@@ -1,0 +1,92 @@
+#!/bin/bash
+# AIO 运维工具集安装脚本
+# 版本: 1.0.0
+
+set -e
+
+REPO_URL="https://github.com/tyler-fire/aio-scripts.git"
+INSTALL_DIR="/opt/aio/scripts"
+TEMP_DIR="/tmp/aio-scripts-install-$$"
+
+echo "========================================"
+echo " AIO 运维工具集 安装程序"
+echo "========================================"
+echo ""
+
+# 检查目标目录
+if [ ! -d "$INSTALL_DIR" ]; then
+    echo "错误: 目标目录不存在: $INSTALL_DIR"
+    exit 1
+fi
+
+# 检查必要命令
+for cmd in git curl; do
+    if ! command -v $cmd &>/dev/null; then
+        echo "错误: 需要 $cmd 命令"
+        exit 1
+    fi
+done
+
+echo "▸ 下载工具集..."
+rm -rf "$TEMP_DIR"
+git clone "$REPO_URL" "$TEMP_DIR" || {
+    echo "错误: 无法从 GitHub 克隆仓库"
+    exit 1
+}
+
+echo "▸ 安装工具文件..."
+cd "$TEMP_DIR"
+
+# 核心工具列表
+CORE_TOOLS=(
+    "aio-tools.sh"
+    "aio-collect-logs.py"
+    "aio-fsdeamon-cleanup.sh"
+    "aio-unlock-tasks.py"
+    "aio-collect-v.sh"
+    "check_aiopool_usage.py"
+)
+
+# 复制核心工具
+for tool in "${CORE_TOOLS[@]}"; do
+    if [ -f "$tool" ]; then
+        cp -f "$tool" "$INSTALL_DIR/"
+        chmod +x "$INSTALL_DIR/$tool"
+        echo "  ✓ $tool"
+    else
+        echo "  ✗ $tool (仓库中不存在)"
+    fi
+done
+
+# 验证安装
+echo ""
+echo "▸ 验证安装..."
+cd "$INSTALL_DIR"
+MISSING=0
+for tool in "${CORE_TOOLS[@]}"; do
+    if [ ! -f "$tool" ]; then
+        echo "  ✗ $tool 安装失败"
+        MISSING=$((MISSING + 1))
+    fi
+done
+
+# 清理临时目录
+rm -rf "$TEMP_DIR"
+
+if [ $MISSING -eq 0 ]; then
+    echo ""
+    echo "========================================"
+    echo " ✓ 安装完成"
+    echo "========================================"
+    echo ""
+    echo "运行工具集: $INSTALL_DIR/aio-tools.sh"
+    echo "查看版本: $INSTALL_DIR/aio-tools.sh -v"
+    echo ""
+    exit 0
+else
+    echo ""
+    echo "========================================"
+    echo " ✗ 安装不完整 ($MISSING 个文件缺失)"
+    echo "========================================"
+    exit 1
+fi
