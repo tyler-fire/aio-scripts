@@ -87,16 +87,16 @@ tool_diagnose() {
 }
 
 tool_performance() {
-    read -rp "请输入 Worker IP: " worker_ip
-    if [ -z "$worker_ip" ]; then
-        echo "[ERROR] Worker IP不能为空"
-        return 1
-    fi
+    read -rp "请输入 Worker IP (回车=自动查询所有Worker): " worker_ip
     read -rp "分析天数 (3/7/14/30, 默认7): " days
     if [ -z "$days" ]; then
         days=7
     fi
-    python3 "$SCRIPT_DIR/aio-worker-performance.py" "$worker_ip" --days "$days"
+    if [ -z "$worker_ip" ]; then
+        python3 "$SCRIPT_DIR/aio-worker-performance.py" --days "$days"
+    else
+        python3 "$SCRIPT_DIR/aio-worker-performance.py" "$worker_ip" --days "$days"
+    fi
 }
 
 tool_fsdeamon_cleanup() {

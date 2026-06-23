@@ -39,9 +39,48 @@ import argparse
 from collections import defaultdict
 import json
 
+
+def decrypt_enc_password(enc_str):
+    """解密ENC格式的密码"""
+    if not enc_str.startswith("ENC(") or not enc_str.endswith(")"):
+        return enc_str
+    enc_data = enc_str[4:-1]
+    try:
+        cmd = [
+            "{}/cdm/bin/python3".format(AIO_HOME), "-c",
+            "import sys, base64, os; "
+            "sys.path.insert(0, '{}/cdm/lib/python3.6/site-packages'); "
+            "from Crypto.Cipher import AES; "
+            "from Crypto.Util.Padding import unpad; "
+            "from aio.config.key import AES_KEY_BASE_64; "
+            "key = base64.b64decode(AES_KEY_BASE_64); "
+            "data = base64.b64decode(os.environ['AIO_ENC_DATA']); "
+            "decrypted = unpad(AES.new(key, AES.MODE_CBC, IV=b'0000000000000000').decrypt(data), AES.block_size); "
+            "sys.stdout.buffer.write(decrypted)".format(AIO_HOME)
+        ]
+        env = os.environ.copy()
+        env['AIO_ENC_DATA'] = enc_data
+        r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10, env=env)
+        if r.returncode == 0:
+            return r.stdout.decode('utf-8', errors='ignore')
+    except Exception:
+        pass
+    return enc_str
+
+
+def strip_quotes(s):
+    """去除首尾单引号或双引号"""
+    if len(s) >= 2 and s[0] in ("'", '"') and s[-1] == s[0]:
+        return s[1:-1]
+    return s
+
 AIO_HOME = "/opt/aio"
 DB_CONFIG = {"host": None, "port": None, "user": None, "password": None, "database": None}
 MYSQL_DEFAULTS_FILE = None
+RPC_BASE = "{}/airflow/tools/rpc".format(AIO_HOME)
+RPC_BIN = "{}/{}/rpc".format(RPC_BASE, os.uname().machine)
+SERVER_IP = None
+BROKER_URL = None
 
 # 性能阈值
 THRESHOLDS = {
@@ -51,6 +90,109 @@ THRESHOLDS = {
     'disk_write_min': 50,  # 写入 < 50MB/s 告警
     'load_per_cpu': 2,  # 负载/CPU核心数 > 2 告警
 }
+
+
+def load_config():
+    """加载配置"""
+    global SERVER_IP, BROKER_URL, DB_CONFIG
+
+    # 从 airflow.runtime.env 读取 broker_url
+    runtime_file = "{}/cfg/airflow.runtime.env".format(AIO_HOME)
+    if os.path.exists(runtime_file):
+        with open(runtime_file) as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("AIRFLOW__CELERY__BROKER_URL="):
+                    BROKER_URL = line.split("=", 1)[1].strip()
+
+    # 从 aio.env 读取 Server IP 和数据库配置
+    env_file = "{}/cfg/aio.env".format(AIO_HOME)
+    if os.path.exists(env_file):
+        with open(env_file) as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("AIO_DB_HOSTNAME="):
+                    SERVER_IP = strip_quotes(line.split("=", 1)[1].strip())
+                    DB_CONFIG["host"] = SERVER_IP
+                elif line.startswith("AIO_DB_PORT="):
+                    DB_CONFIG["port"] = strip_quotes(line.split("=", 1)[1].strip())
+                elif line.startswith("AIO_DB_USERNAME="):
+                    DB_CONFIG["user"] = strip_quotes(line.split("=", 1)[1].strip())
+                elif line.startswith("AIO_DB_PASSWORD="):
+                    DB_CONFIG["password"] = decrypt_enc_password(strip_quotes(line.split("=", 1)[1].strip()))
+                elif line.startswith("AIO_DB_NAME="):
+                    DB_CONFIG["database"] = strip_quotes(line.split("=", 1)[1].strip())
+
+
+def discover_workers():
+    """发现Worker节点"""
+    workers = []
+
+    # 方式1: 通过 Celery inspect 发现活跃 Worker
+    if BROKER_URL:
+        python_bin = "{}/airflow/bin/python3".format(AIO_HOME)
+        if not os.path.exists(python_bin):
+            python_bin = sys.executable
+
+        script = (
+            "from celery import Celery; "
+            "app = Celery(broker='{}'); "
+            "active = app.control.inspect(timeout=5).active_queues() or {{}}; "
+            "print('\\n'.join(n.split('@',1)[-1] for n in sorted(active)))"
+        ).format(BROKER_URL)
+
+        queues = []
+        try:
+            r = subprocess.run([python_bin, "-c", script],
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
+            if r.returncode == 0 and r.stdout.decode().strip():
+                queues = [n.strip() for n in r.stdout.decode().strip().split('\n') if n.strip()]
+        except Exception:
+            pass
+
+        if queues:
+            mysql_cmd = [
+                "/usr/local/mysql/bin/mysql",
+                "-h", DB_CONFIG.get("host", SERVER_IP),
+                "-P", DB_CONFIG.get("port", "3306"),
+                "-u", DB_CONFIG.get("user", "root"),
+                "-p{}".format(DB_CONFIG.get("password", "")),
+                "-N", DB_CONFIG.get("database", "aio"), "-e",
+                "SELECT sys_dn_ipaddr FROM aio_data_nodes WHERE sys_dn_queue IN ({}) AND sys_dn_is_delete = 0".format(
+                    ",".join("'{}'".format(q) for q in queues)
+                )
+            ]
+            try:
+                r = subprocess.run(mysql_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15)
+                if r.returncode == 0 and r.stdout.decode().strip():
+                    ips = [ip.strip() for ip in r.stdout.decode().strip().split('\n') if ip.strip()]
+                    if ips:
+                        return list(dict.fromkeys(ips))
+            except Exception:
+                pass
+
+    # 方式2: 直接查 MySQL 获取所有 Worker IP
+    mysql_cmd = [
+        "/usr/local/mysql/bin/mysql",
+        "-h", str(DB_CONFIG.get("host", SERVER_IP) or "127.0.0.1"),
+        "-P", str(DB_CONFIG.get("port", "3306")),
+        "-u", str(DB_CONFIG.get("user", "root")),
+        "-p{}".format(DB_CONFIG.get("password", "")),
+        "-N", str(DB_CONFIG.get("database", "aio")), "-e",
+        "SELECT DISTINCT sys_dn_ipaddr FROM aio_data_nodes WHERE sys_dn_is_delete = 0"
+    ]
+    try:
+        r = subprocess.run(mysql_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15)
+        if r.returncode == 0:
+            output = r.stdout.decode().strip()
+            if output:
+                ips = [ip.strip() for ip in output.split('\n') if ip.strip()]
+                if ips:
+                    return list(dict.fromkeys(ips))
+    except Exception as e:
+        print("查询数据库失败: {}".format(e))
+
+    return workers
 
 
 def strip_quotes(s):
@@ -174,11 +316,29 @@ def rpc_execute(host, command, port=6611):
         rpc_path = "/opt/aio/airflow/tools/rpc/{}/rpc".format(os.uname().machine)
         cmd = [rpc_path, '-h', host, '-p', str(port), '-c', command]
         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+
         if result.returncode == 0:
             return result.stdout.decode()
+
+        # 连接失败，显示错误信息
+        stderr = result.stderr.decode('utf-8', errors='ignore').strip()
+        if 'Connection refused' in stderr or 'connect failed' in stderr:
+            print("  ⚠️  Worker {} RPC 连接失败（端口 {} 不可达）".format(host, port))
+        elif 'No route to host' in stderr or 'Host is unreachable' in stderr:
+            print("  ⚠️  Worker {} 网络不可达".format(host))
+        elif 'timed out' in stderr.lower() or 'timeout' in stderr.lower():
+            print("  ⚠️  Worker {} RPC 连接超时".format(host))
+        elif stderr:
+            print("  ⚠️  Worker {} RPC 执行失败: {}".format(host, stderr[:100]))
+        else:
+            print("  ⚠️  Worker {} RPC 返回错误（退出码 {}）".format(host, result.returncode))
+        return None
+
+    except subprocess.TimeoutExpired:
+        print("  ⚠️  Worker {} RPC 连接超时（60秒）".format(host))
         return None
     except Exception as e:
-        print("  [DEBUG] RPC 执行失败: {}".format(e))
+        print("  ⚠️  Worker {} RPC 执行异常: {}".format(host, str(e)))
         return None
 
 
@@ -315,7 +475,7 @@ def parse_sar_network(sar_output):
     return data
 
 
-def draw_ascii_chart(data, title, value_key, height=10, width=60):
+def draw_ascii_chart(data, title, value_key, height=10, width=70):
     """绘制 ASCII 图表"""
     if not data:
         return ""
@@ -323,40 +483,86 @@ def draw_ascii_chart(data, title, value_key, height=10, width=60):
     values = [d[value_key] for d in data]
     max_val = max(values)
     min_val = min(values)
+    avg_val = sum(values) / len(values)
 
     if max_val == min_val:
         max_val = min_val + 1
 
     lines = []
     lines.append("\n" + title)
-    lines.append("─" * width)
+    lines.append("─" * (width + 10))
+
+    # 找到峰值位置
+    peak_idx = values.index(max_val)
+    peak_char_pos = int(peak_idx * (width - 10) / len(values))
 
     # 绘制图表
     for i in range(height, 0, -1):
         threshold = min_val + (max_val - min_val) * i / height
-        line = "{:6.1f} ┤".format(threshold)
+        line = "{:7.1f} ┤".format(threshold)
 
         for j, val in enumerate(values):
-            if j >= width - 10:
+            char_pos = int(j * (width - 10) / len(values))
+            if char_pos >= width - 10:
                 break
-            if val >= threshold:
+
+            # 在峰值处标注
+            if j == peak_idx and abs(val - threshold) < (max_val - min_val) / (height * 2):
+                line += "▲"
+            elif val >= threshold:
                 line += "█"
             else:
                 line += " "
+
+        # 在峰值行右侧标注数值
+        if abs(max_val - threshold) < (max_val - min_val) / (height * 2):
+            line += " ← 峰值 {:.1f}".format(max_val)
+
         lines.append(line)
 
     # X 轴
-    lines.append("       └" + "─" * min(len(values), width - 10))
+    lines.append("        └" + "─" * (width - 10))
 
-    # 时间标签（显示首尾）
+    # 时间标签（显示首、中、尾的日期和时间）
     if len(data) > 0:
-        first_time = data[0].get('time', '')
-        last_time = data[-1].get('time', '')
-        lines.append("        {}{}{}".format(
-            first_time[:5] if len(first_time) > 5 else first_time,
-            " " * max(0, width - 20),
-            last_time[:5] if len(last_time) > 5 else last_time
-        ))
+        # 尝试从 data 中获取日期信息
+        first_date = data[0].get('date', '')
+        mid_date = data[len(data)//2].get('date', '') if len(data) > 1 else ''
+        last_date = data[-1].get('date', '')
+
+        first_time = data[0].get('time', '')[:5]
+        mid_time = data[len(data)//2].get('time', '')[:5] if len(data) > 1 else ''
+        last_time = data[-1].get('time', '')[:5]
+
+        # 如果有日期，格式为 "月/日 时:分"
+        first_label = "{} {}".format(first_date[5:10] if first_date else '', first_time)
+        mid_label = "{} {}".format(mid_date[5:10] if mid_date else '', mid_time)
+        last_label = "{} {}".format(last_date[5:10] if last_date else '', last_time)
+
+        time_line = "         " + first_label
+        if mid_label.strip():
+            time_line += " " * ((width - 35) // 2) + mid_label
+        time_line += " " * max(0, width - 15 - len(time_line)) + last_label
+        lines.append(time_line)
+
+    # 趋势分析
+    if len(values) > 10:
+        first_third = values[:len(values)//3]
+        last_third = values[-len(values)//3:]
+        first_avg = sum(first_third) / len(first_third)
+        last_avg = sum(last_third) / len(last_third)
+
+        change_pct = ((last_avg - first_avg) / first_avg * 100) if first_avg > 0 else 0
+
+        if abs(change_pct) < 5:
+            trend = "稳定"
+        elif change_pct > 0:
+            trend = "上升 {:.1f}%".format(change_pct)
+        else:
+            trend = "下降 {:.1f}%".format(abs(change_pct))
+
+        lines.append("         趋势: {}  |  平均: {:.1f}  最小: {:.1f}".format(
+            trend, avg_val, min_val))
 
     return "\n".join(lines)
 
@@ -482,13 +688,9 @@ def analyze_worker(worker_ip, days):
     start_date = end_date - datetime.timedelta(days=days)
 
     # 查询任务
-    print("[1/5] 查询备份任务...")
     tasks = query_tasks(worker_ip, start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"))
-    print("  找到 {} 个任务".format(len(tasks)))
 
     # 收集 sar 数据
-    print("\n[2/5] 收集 sar 性能数据...")
-
     all_cpu_data = []
     all_mem_data = []
     all_disk_data = []
@@ -497,38 +699,47 @@ def analyze_worker(worker_ip, days):
     for i in range(days):
         date = end_date - datetime.timedelta(days=i)
         day_num = date.strftime("%d")
+        date_str = date.strftime("%Y-%m-%d")
 
         # CPU
         cmd = "sar -u -f /var/log/sa/sa{} 2>/dev/null | grep -v '^$'".format(day_num)
         output = rpc_execute(worker_ip, cmd)
         if output:
-            all_cpu_data.extend(parse_sar_cpu(output))
+            cpu_data = parse_sar_cpu(output)
+            # 添加日期信息
+            for item in cpu_data:
+                item['date'] = date_str
+            all_cpu_data.extend(cpu_data)
 
         # 内存
         cmd = "sar -r -f /var/log/sa/sa{} 2>/dev/null | grep -v '^$'".format(day_num)
         output = rpc_execute(worker_ip, cmd)
         if output:
-            all_mem_data.extend(parse_sar_memory(output))
+            mem_data = parse_sar_memory(output)
+            for item in mem_data:
+                item['date'] = date_str
+            all_mem_data.extend(mem_data)
 
         # 磁盘
         cmd = "sar -d -f /var/log/sa/sa{} 2>/dev/null | grep -v '^$'".format(day_num)
         output = rpc_execute(worker_ip, cmd)
         if output:
-            all_disk_data.extend(parse_sar_disk(output))
+            disk_data = parse_sar_disk(output)
+            for item in disk_data:
+                item['date'] = date_str
+            all_disk_data.extend(disk_data)
 
         # 网络
         cmd = "sar -n DEV -f /var/log/sa/sa{} 2>/dev/null | grep -v '^$'".format(day_num)
         output = rpc_execute(worker_ip, cmd)
         if output:
-            all_net_data.extend(parse_sar_network(output))
+            net_data = parse_sar_network(output)
+            for item in net_data:
+                item['date'] = date_str
+            all_net_data.extend(net_data)
 
-    print("  CPU 数据点: {}".format(len(all_cpu_data)))
-    print("  内存数据点: {}".format(len(all_mem_data)))
-    print("  磁盘数据点: {}".format(len(all_disk_data)))
-    print("  网络数据点: {}".format(len(all_net_data)))
 
     # 分析
-    print("\n[3/5] 分析性能指标...")
 
     results = {
         'worker_ip': worker_ip,
@@ -601,92 +812,98 @@ def analyze_worker(worker_ip, days):
         }
 
     # 输出分析结果
-    print("\n[4/5] 生成报告...")
     print_report(results, all_cpu_data, all_mem_data,
                  disk_by_dev.get(results['disk'].get('device'), []) if 'disk' in results and 'device' in results['disk'] else [],
-                 net_by_iface.get(results['network'].get('interface'), []) if 'network' in results and 'interface' in results['network'] else [])
+                 net_by_iface.get(results['network'].get('interface'), []) if 'network' in results and 'interface' in results['network'] else [],
+                 tasks)
 
-    print("\n[5/5] 完成")
 
     return results
 
 
-def print_report(results, cpu_data, mem_data, disk_data, net_data):
+def print_report(results, cpu_data, mem_data, disk_data, net_data, tasks):
     """打印报告"""
-    print("\n" + "=" * 70)
-    print("性能摘要")
-    print("=" * 70)
+    print("\n" + "=" * 100)
+    print("每日性能统计")
+    print("=" * 100)
+    print_daily_table(cpu_data, mem_data, disk_data, net_data)
 
-    # CPU
-    if results['cpu']:
-        cpu = results['cpu']
-        print("\n## CPU 使用率")
-        print("  平均: {:.1f}%".format(cpu['avg']))
-        if cpu['peak']:
-            peak = cpu['peak']
-            status = " ⚠️" if peak['usage'] > THRESHOLDS['cpu'] else ""
-            print("  峰值: {:.1f}%{} (时间: {})".format(peak['usage'], status, peak['time']))
-        if cpu['anomalies']:
-            print("  ⚠️  {} 次超过 {}% 阈值".format(len(cpu['anomalies']), THRESHOLDS['cpu']))
 
-    # 内存
-    if results['memory']:
-        mem = results['memory']
-        print("\n## 内存使用率")
-        print("  平均: {:.1f}%".format(mem['avg']))
-        if mem['peak']:
-            peak = mem['peak']
-            status = " ⚠️" if peak['usage'] > THRESHOLDS['memory'] else ""
-            print("  峰值: {:.1f}%{} (时间: {})".format(peak['usage'], status, peak['time']))
-        if mem['anomalies']:
-            print("  ⚠️  {} 次超过 {}% 阈值".format(len(mem['anomalies']), THRESHOLDS['memory']))
+def print_daily_table(cpu_data, mem_data, disk_data, net_data):
+    """打印每日统计表格"""
+    from collections import defaultdict
 
-    # 磁盘
-    if results['disk']:
-        disk = results['disk']
-        print("\n## 磁盘 IO ({})".format(disk['device']))
-        print("  平均写入: {:.1f} MB/s".format(disk['write_avg']))
-        if disk['write_peak']:
-            peak = disk['write_peak']
-            print("  峰值写入: {:.1f} MB/s (时间: {})".format(peak['write_mb'], peak['time']))
-        print("  平均等待: {:.1f} ms".format(disk['await_avg']))
-        if disk['await_peak']:
-            peak = disk['await_peak']
-            status = " ⚠️" if peak['await'] > THRESHOLDS['disk_await'] else ""
-            print("  峰值等待: {:.1f} ms{} (时间: {})".format(peak['await'], status, peak['time']))
-        if disk['await_anomalies']:
-            print("  ⚠️  {} 次 IO 等待超过 {} ms".format(len(disk['await_anomalies']), THRESHOLDS['disk_await']))
+    # 按日期分组，同时保留完整记录用于找峰值时间
+    daily_stats = defaultdict(lambda: {
+        'cpu': [], 'mem': [], 'disk': [], 'net': [],
+        'cpu_records': [], 'mem_records': []
+    })
 
-    # 网络
-    if results['network']:
-        net = results['network']
-        print("\n## 网络流量 ({})".format(net['interface']))
-        print("  平均发送: {:.1f} MB/s".format(net['tx_avg']))
-        if net['tx_peak']:
-            peak = net['tx_peak']
-            print("  峰值发送: {:.1f} MB/s (时间: {})".format(peak['tx_mb'], peak['time']))
+    for item in cpu_data:
+        if 'date' in item:
+            daily_stats[item['date']]['cpu'].append(item['usage'])
+            daily_stats[item['date']]['cpu_records'].append(item)
 
-    # 绘制图表
-    print("\n" + "=" * 70)
-    print("性能趋势图")
-    print("=" * 70)
+    for item in mem_data:
+        if 'date' in item:
+            daily_stats[item['date']]['mem'].append(item['usage'])
+            daily_stats[item['date']]['mem_records'].append(item)
 
-    if cpu_data:
-        # 采样（每10个点取1个，避免图表太密集）
-        sampled = cpu_data[::max(1, len(cpu_data) // 50)]
-        print(draw_ascii_chart(sampled, "CPU 使用率 (%)", 'usage'))
+    for item in disk_data:
+        if 'date' in item:
+            daily_stats[item['date']]['disk'].append(item['write_mb'])
 
-    if mem_data:
-        sampled = mem_data[::max(1, len(mem_data) // 50)]
-        print(draw_ascii_chart(sampled, "\n内存使用率 (%)", 'usage'))
+    for item in net_data:
+        if 'date' in item:
+            daily_stats[item['date']]['net'].append(item['tx_mb'])
 
-    if disk_data:
-        sampled = disk_data[::max(1, len(disk_data) // 50)]
-        print(draw_ascii_chart(sampled, "\n磁盘写入速度 (MB/s)", 'write_mb'))
+    if not daily_stats:
+        return
 
-    if net_data:
-        sampled = net_data[::max(1, len(net_data) // 50)]
-        print(draw_ascii_chart(sampled, "\n网络发送速度 (MB/s)", 'tx_mb'))
+    # 打印表头
+    print("\n日期       | CPU平均 | CPU峰值(时间)      | 内存平均 | 内存峰值(时间)     | 磁盘写入 | 网络发送")
+    print("-" * 100)
+
+    # 按日期排序（从最新到最旧）
+    for date in sorted(daily_stats.keys(), reverse=True):
+        stats = daily_stats[date]
+
+        cpu_avg = sum(stats['cpu']) / len(stats['cpu']) if stats['cpu'] else 0
+        cpu_max = max(stats['cpu']) if stats['cpu'] else 0
+
+        # 找到CPU峰值对应的时间
+        cpu_peak_time = ""
+        if stats['cpu_records']:
+            cpu_peak_record = max(stats['cpu_records'], key=lambda x: x['usage'])
+            cpu_peak_time = cpu_peak_record.get('time', '')
+            # 格式化时间：只保留 HH:MM
+            if cpu_peak_time:
+                parts = cpu_peak_time.split()
+                if len(parts) >= 1:
+                    time_part = parts[0]  # "06:40:00"
+                    cpu_peak_time = time_part[:5]  # "06:40"
+
+        mem_avg = sum(stats['mem']) / len(stats['mem']) if stats['mem'] else 0
+        mem_max = max(stats['mem']) if stats['mem'] else 0
+
+        # 找到内存峰值对应的时间
+        mem_peak_time = ""
+        if stats['mem_records']:
+            mem_peak_record = max(stats['mem_records'], key=lambda x: x['usage'])
+            mem_peak_time = mem_peak_record.get('time', '')
+            # 格式化时间：只保留 HH:MM
+            if mem_peak_time:
+                parts = mem_peak_time.split()
+                if len(parts) >= 1:
+                    time_part = parts[0]  # "06:40:00"
+                    mem_peak_time = time_part[:5]  # "06:40"
+
+        disk_avg = sum(stats['disk']) / len(stats['disk']) if stats['disk'] else 0
+        net_avg = sum(stats['net']) / len(stats['net']) if stats['net'] else 0
+
+        print("{} | {:6.1f}% | {:6.1f}%({:5s}) | {:7.1f}% | {:7.1f}%({:5s}) | {:7.1f}M | {:7.1f}M".format(
+            date, cpu_avg, cpu_max, cpu_peak_time or "N/A", mem_avg, mem_max, mem_peak_time or "N/A", disk_avg, net_avg
+        ))
 
 
 def main():
@@ -694,7 +911,7 @@ def main():
         description='AIO Worker 性能分析工具 v{}'.format(VERSION),
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument('worker_ip', help='Worker IP 地址')
+    parser.add_argument('worker_ip', nargs='?', help='Worker IP 地址（不指定则自动查询所有 Worker）')
     parser.add_argument('--days', type=int, default=7, choices=[3, 7, 14, 30],
                         help='分析天数 (3/7/14/30，默认 7)')
     parser.add_argument('--html', action='store_true',
@@ -705,7 +922,23 @@ def main():
 
     try:
         load_config()
-        analyze_worker(args.worker_ip, args.days)
+
+        # 确定要分析的 Worker 列表
+        if args.worker_ip:
+            worker_ips = [args.worker_ip]
+        else:
+            print("正在查询 Worker 节点...")
+            worker_ips = discover_workers()
+            if not worker_ips:
+                print("错误: 未找到任何 Worker 节点")
+                sys.exit(1)
+            print("找到 {} 个 Worker 节点\n".format(len(worker_ips)))
+
+        # 分析每个 Worker
+        for worker_ip in worker_ips:
+            analyze_worker(worker_ip, args.days)
+            if len(worker_ips) > 1:
+                print("\n")  # 多个 Worker 之间加空行
 
         if args.html:
             print("\n[TODO] HTML 报告生成功能将在后续版本实现")
