@@ -415,6 +415,33 @@ def find_task_at_time(tasks, time_str, date_str):
         return None
     except Exception:
         return None
+
+
+def query_tasks(worker_ip, start_date, end_date):
+    """查询 Worker 在指定时间范围内的任务"""
+    sql = """
+    SELECT t.id, t.task_num, t.task_type, t.task_status,
+           t.start_time, t.end_time
+    FROM aio_total_task t
+    JOIN aio_sub_task s ON t.id = s.total_task_id
+    WHERE s.src_node_ip = '{}'
+    AND t.start_time >= '{}'
+    AND t.start_time <= '{}'
+    ORDER BY t.start_time
+    """.format(worker_ip, start_date, end_date)
+
+    results = execute_mysql_query(sql)
+    tasks = []
+    for row in results:
+        tasks.append({
+            'id': int(row[0]),
+            'task_num': row[1],
+            'task_type': row[2],
+            'status': row[3],
+            'start_time': row[4],
+            'end_time': row[5]
+        })
+    return tasks
     """查询 Worker 在指定时间范围内的任务"""
     sql = """
     SELECT t.id, t.task_num, t.task_type, t.task_status,
