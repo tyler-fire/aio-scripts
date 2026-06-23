@@ -1,6 +1,6 @@
 #!/bin/bash
-# 构建 aio-scripts.install 自解压安装包
-# 版本: 2.0.4
+# 构建 aio-scripts.install 自解压安装包并发布到 GitHub Release
+# 版本: 3.0.0
 
 set -e
 
@@ -8,6 +8,18 @@ VERSION="2.0.4"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUTPUT_FILE="$SCRIPT_DIR/aio-scripts.install"
 TEMP_DIR="/tmp/aio-scripts-build-$$"
+GITHUB_REPO="tyler-fire/aio-scripts"
+GITHUB_TOKEN=""  # 从环境变量或配置文件读取
+
+# 从 git config 读取 GitHub token
+if [ -z "$GITHUB_TOKEN" ]; then
+    GITHUB_TOKEN=$(git config --get github.token 2>/dev/null || echo "")
+fi
+
+# 从 ~/.github_token 读取
+if [ -z "$GITHUB_TOKEN" ] && [ -f "$HOME/.github_token" ]; then
+    GITHUB_TOKEN=$(cat "$HOME/.github_token")
+fi
 
 echo "========================================"
 echo " 构建 AIO 运维工具集安装包 v${VERSION}"
@@ -166,3 +178,104 @@ echo "文件大小: $FILE_SIZE"
 echo ""
 echo "安装命令: bash $OUTPUT_FILE"
 echo ""
+
+# 是否发布到 GitHub Release
+echo "----------------------------------------"
+read -rp "是否发布到 GitHub Release? [y/N]: " publish
+if [[ "$publish" =~ ^[Yy]$ ]]; then
+    if [ -z "$GITHUB_TOKEN" ]; then
+        echo ""
+        echo "错误: 未找到 GitHub Token"
+        echo "请设置环境变量或配置文件："
+        echo "  方法1: export GITHUB_TOKEN=your_token"
+        echo "  方法2: git config github.token your_token"
+        echo "  方法3: echo 'your_token' > ~/.github_token"
+        exit 1
+    fi
+
+    echo ""
+    echo "▸ 发布到 GitHub Release v${VERSION}..."
+
+    # 1. 检查 Release 是否已存在
+    echo "  检查已有 Release..."
+    RELEASE_ID=$(curl -s -H "Accept: application/vnd.github+json" \
+        -H "Authorization: Bearer $GITHUB_TOKEN" \
+        "https://api.github.com/repos/$GITHUB_REPO/releases/tags/v${VERSION}" | \
+        jq -r '.id // empty')
+
+    if [ -n "$RELEASE_ID" ]; then
+        echo "  删除旧 Release v${VERSION} (ID: $RELEASE_ID)..."
+        curl -s -X DELETE \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            "https://api.github.com/repos/$GITHUB_REPO/releases/$RELEASE_ID" > /dev/null
+    fi
+
+    # 2. 创建新 Release
+    echo "  创建新 Release v${VERSION}..."
+    RELEASE_BODY="## 🚀 新功能
+
+- **Worker 性能分析工具** - 支持自动发现所有 Worker，一键分析性能趋势
+- **表格化输出** - 简洁的每日统计表格，清晰展示 CPU/内存峰值时间
+- **RPC 错误提示** - 连接失败时显示具体原因（端口不可达、超时等）
+
+## 📦 安装方式
+
+\`\`\`bash
+wget https://github.com/$GITHUB_REPO/releases/download/v${VERSION}/aio-scripts.install
+bash aio-scripts.install
+\`\`\`
+
+## 🛠️ 包含工具
+
+- aio-tools.sh - 运维工具菜单
+- aio-diagnose.py - 问题诊断（AI 辅助）
+- aio-worker-performance.py - Worker 性能分析（新增自动发现）
+- aio-collect-logs.py - 日志收集
+- aio-unlock-tasks.py - 任务解锁
+- aio-fsdeamon-cleanup.sh - fsdeamon 清理
+- check_aiopool_usage.py - aiopool 空间检查
+- aio-collect-v.sh - 版本信息收集
+- ops - 数据库专项脚本
+
+## 📝 更新日志
+
+- 新增 Worker 性能分析自动发现功能
+- 优化性能分析输出格式
+- 增强 RPC 连接错误提示
+- 更新工具菜单"
+
+    RELEASE_RESPONSE=$(curl -s -X POST \
+        -H "Accept: application/vnd.github+json" \
+        -H "Authorization: Bearer $GITHUB_TOKEN" \
+        "https://api.github.com/repos/$GITHUB_REPO/releases" \
+        -d "{
+            \"tag_name\": \"v${VERSION}\",
+            \"name\": \"AIO 运维工具集 v${VERSION}\",
+            \"body\": $(echo "$RELEASE_BODY" | jq -Rs .),
+            \"draft\": false,
+            \"prerelease\": false
+        }")
+
+    NEW_RELEASE_ID=$(echo "$RELEASE_RESPONSE" | jq -r '.id')
+    if [ -z "$NEW_RELEASE_ID" ] || [ "$NEW_RELEASE_ID" = "null" ]; then
+        echo "  错误: 创建 Release 失败"
+        echo "$RELEASE_RESPONSE" | jq .
+        exit 1
+    fi
+
+    # 3. 上传安装包
+    echo "  上传安装包..."
+    curl -s -X POST \
+        -H "Accept: application/vnd.github+json" \
+        -H "Authorization: Bearer $GITHUB_TOKEN" \
+        -H "Content-Type: application/octet-stream" \
+        --data-binary "@$OUTPUT_FILE" \
+        "https://uploads.github.com/repos/$GITHUB_REPO/releases/$NEW_RELEASE_ID/assets?name=aio-scripts.install" > /dev/null
+
+    echo ""
+    echo "✓ 发布完成!"
+    echo "  Release: https://github.com/$GITHUB_REPO/releases/tag/v${VERSION}"
+    echo "  下载: https://github.com/$GITHUB_REPO/releases/download/v${VERSION}/aio-scripts.install"
+    echo ""
+fi
