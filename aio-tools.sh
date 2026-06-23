@@ -1,5 +1,5 @@
 #!/bin/bash
-# 版本: 1.1.0
+# 版本: 1.2.0
 # AIO 运维工具集入口
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
@@ -7,6 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 TOOLS=(
     "aio-collect-logs.py|日志收集"
     "aio-diagnose.py|任务诊断"
+    "aio-worker-performance.py|性能分析"
     "aio-fsdeamon-cleanup.sh|fsdeamon清理"
     "aio-unlock-tasks.py|任务解锁"
     "aio-collect-v.sh|版本收集"
@@ -50,11 +51,12 @@ show_menu() {
     echo "========================================"
     echo "  1) 日志收集    - 根据任务ID收集Worker日志"
     echo "  2) 任务诊断    - 完整诊断(日志+数据库+服务+系统)"
-    echo "  3) fsdeamon清理 - 清理fsdeamon残留挂载和进程"
-    echo "  4) 任务解锁    - 将卡住的running任务标记为failed"
-    echo "  5) 版本收集    - 收集本机和Worker的工具版本"
-    echo "  6) 存储检查    - 检查Worker的aiopool磁盘空间"
-    echo "  7) 加解密工具  - 文件加密/解密(ops)"
+    echo "  3) 性能分析    - Worker性能趋势(基于sar数据)"
+    echo "  4) fsdeamon清理 - 清理fsdeamon残留挂载和进程"
+    echo "  5) 任务解锁    - 将卡住的running任务标记为failed"
+    echo "  6) 版本收集    - 收集本机和Worker的工具版本"
+    echo "  7) 存储检查    - 检查Worker的aiopool磁盘空间"
+    echo "  8) 加解密工具  - 文件加密/解密(ops)"
     echo "  0) 退出"
     echo "----------------------------------------"
     echo "  -v) 查看版本信息"
@@ -82,6 +84,19 @@ tool_diagnose() {
         return 1
     fi
     python3 "$SCRIPT_DIR/aio-diagnose.py" "$task_id"
+}
+
+tool_performance() {
+    read -rp "请输入 Worker IP: " worker_ip
+    if [ -z "$worker_ip" ]; then
+        echo "[ERROR] Worker IP不能为空"
+        return 1
+    fi
+    read -rp "分析天数 (3/7/14/30, 默认7): " days
+    if [ -z "$days" ]; then
+        days=7
+    fi
+    python3 "$SCRIPT_DIR/aio-worker-performance.py" "$worker_ip" --days "$days"
 }
 
 tool_fsdeamon_cleanup() {
@@ -130,11 +145,12 @@ run_tool() {
     case "$2" in
         1) tool_collect_logs ;;
         2) tool_diagnose ;;
-        3) tool_fsdeamon_cleanup ;;
-        4) python3 "$SCRIPT_DIR/aio-unlock-tasks.py" ;;
-        5) tool_collect_versions ;;
-        6) tool_check_aiopool ;;
-        7) tool_ops ;;
+        3) tool_performance ;;
+        4) tool_fsdeamon_cleanup ;;
+        5) python3 "$SCRIPT_DIR/aio-unlock-tasks.py" ;;
+        6) tool_collect_versions ;;
+        7) tool_check_aiopool ;;
+        8) tool_ops ;;
     esac
 }
 
@@ -146,17 +162,18 @@ fi
 
 while true; do
     show_menu
-    read -rp "请选择 [0-7]: " choice
+    read -rp "请选择 [0-8]: " choice
     case "$choice" in
         0) echo "退出."; exit 0 ;;
         -v|--version) show_versions ;;
         1) run_tool "日志收集" 1 ;;
         2) run_tool "任务诊断" 2 ;;
-        3) run_tool "fsdeamon清理" 3 ;;
-        4) run_tool "任务解锁" 4 ;;
-        5) run_tool "版本收集" 5 ;;
-        6) run_tool "存储检查" 6 ;;
-        7) run_tool "加解密工具" 7 ;;
+        3) run_tool "性能分析" 3 ;;
+        4) run_tool "fsdeamon清理" 4 ;;
+        5) run_tool "任务解锁" 5 ;;
+        6) run_tool "版本收集" 6 ;;
+        7) run_tool "存储检查" 7 ;;
+        8) run_tool "加解密工具" 8 ;;
         *) echo "[ERROR] 无效输入" ;;
     esac
 done
