@@ -4,7 +4,7 @@
 
 set -e
 
-VERSION="2.0.4"
+VERSION="2.0.5"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUTPUT_FILE="$SCRIPT_DIR/aio-scripts.install"
 TEMP_DIR="/tmp/aio-scripts-build-$$"
@@ -63,7 +63,7 @@ echo "▸ 生成自解压安装脚本..."
 cat > "$OUTPUT_FILE" << 'EOF'
 #!/bin/bash
 # AIO 运维工具集安装脚本（自解压）
-# 版本: 2.0.4
+# 版本: 2.0.5
 
 set -e
 
@@ -213,11 +213,10 @@ if [[ "$publish" =~ ^[Yy]$ ]]; then
 
     # 2. 创建新 Release
     echo "  创建新 Release v${VERSION}..."
-    RELEASE_BODY="## 🚀 新功能
+    RELEASE_BODY="## 🚀 本次更新
 
-- **Worker 性能分析工具** - 支持自动发现所有 Worker，一键分析性能趋势
-- **表格化输出** - 简洁的每日统计表格，清晰展示 CPU/内存峰值时间
-- **RPC 错误提示** - 连接失败时显示具体原因（端口不可达、超时等）
+- **aiopool 存储汇总表** - check_aiopool_usage.py 在所有 Worker 详细输出后新增汇总表，每行一个 Worker，列出总容量/已用/可用/使用率/状态，多 Worker 时一眼对比
+- **使用率高亮** - 汇总表中使用率 >=80% 标记 \`!\`、>=90% 标记 \`!!\`，失败的 Worker 也会出现在表中并显示原因
 
 ## 📦 安装方式
 
@@ -240,10 +239,9 @@ bash aio-scripts.install
 
 ## 📝 更新日志
 
-- 新增 Worker 性能分析自动发现功能
-- 优化性能分析输出格式
-- 增强 RPC 连接错误提示
-- 更新工具菜单"
+- check_aiopool_usage.py 新增多 Worker 存储汇总表
+- 汇总表使用率高亮 + 失败 Worker 纳入
+- 此前: Worker 性能分析自动发现、表格化输出、RPC 错误提示"
 
     RELEASE_RESPONSE=$(curl -s -X POST \
         -H "Accept: application/vnd.github+json" \
