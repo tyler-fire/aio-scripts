@@ -4,7 +4,7 @@
 
 set -e
 
-VERSION="2.0.5"
+VERSION="2.1.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUTPUT_FILE="$SCRIPT_DIR/aio-scripts.install"
 TEMP_DIR="/tmp/aio-scripts-build-$$"
@@ -63,7 +63,7 @@ echo "▸ 生成自解压安装脚本..."
 cat > "$OUTPUT_FILE" << 'EOF'
 #!/bin/bash
 # AIO 运维工具集安装脚本（自解压）
-# 版本: 2.0.5
+# 版本: 2.1.0
 
 set -e
 
@@ -215,8 +215,8 @@ if [[ "$publish" =~ ^[Yy]$ ]]; then
     echo "  创建新 Release v${VERSION}..."
     RELEASE_BODY="## 🚀 本次更新
 
-- **aiopool 存储汇总表** - check_aiopool_usage.py 在所有 Worker 详细输出后新增汇总表，每行一个 Worker，列出总容量/已用/可用/使用率/状态，多 Worker 时一眼对比
-- **使用率高亮** - 汇总表中使用率 >=80% 标记 \`!\`、>=90% 标记 \`!!\`，失败的 Worker 也会出现在表中并显示原因
+- **aio-collect-logs.py 子任务过滤** - 新增 \`--failed-only\`(仅收失败子任务)和 \`--subtask <ids>\`(仅收指定子任务ID)参数。10 个子任务只有 1 个失败时,直接 \`--failed-only\` 即可,日志包体积缩到 1/10,翻日志不再大海捞针
+- **aio-collect-logs.py 帮助文本更新** - 帮助中补充了上述场景的典型示例
 
 ## 📦 安装方式
 
@@ -230,7 +230,7 @@ bash aio-scripts.install
 - aio-tools.sh - 运维工具菜单
 - aio-diagnose.py - 问题诊断（AI 辅助）
 - aio-worker-performance.py - Worker 性能分析（新增自动发现）
-- aio-collect-logs.py - 日志收集
+- aio-collect-logs.py - 日志收集（新增子任务过滤）
 - aio-unlock-tasks.py - 任务解锁
 - aio-fsdeamon-cleanup.sh - fsdeamon 清理
 - check_aiopool_usage.py - aiopool 空间检查
@@ -239,8 +239,9 @@ bash aio-scripts.install
 
 ## 📝 更新日志
 
-- check_aiopool_usage.py 新增多 Worker 存储汇总表
-- 汇总表使用率高亮 + 失败 Worker 纳入
+- aio-collect-logs.py 新增 --failed-only / --subtask 子任务过滤
+- 过滤行为已用真实任务 19459 验证通过(含边界条件)
+- 此前 (v2.0.5): check_aiopool_usage.py 多 Worker 存储汇总表
 - 此前: Worker 性能分析自动发现、表格化输出、RPC 错误提示"
 
     RELEASE_RESPONSE=$(curl -s -X POST \
