@@ -24,14 +24,14 @@ bash aio-scripts.install
 | 工具 | 说明 |
 |------|------|
 | **aio-tools.sh** | 运维工具菜单（推荐使用） |
-| **aio-diagnose.py** | 问题诊断工具 - AI辅助分析任务失败原因 |
+| **aio-diagnose.py** | 任务诊断工具 - 打包任务日志、数据库快照、服务日志和系统日志 |
 | **aio-worker-performance.py** | Worker性能分析 - 基于sar数据的性能趋势分析 |
 | **aio-collect-logs.py** | 日志收集工具 - 收集指定任务的完整日志 |
 | **aio-unlock-tasks.py** | 任务解锁工具 - 解锁卡住的任务 |
 | **aio-fsdeamon-cleanup.sh** | fsdeamon清理工具 - 清理未监控的备份源 |
 | **check_aiopool_usage.py** | aiopool空间检查 - 统计Worker磁盘占用 |
 | **aio-collect-v.sh** | 版本信息收集 - 收集环境和版本信息 |
-| **ops** | 运维工具集目录 - 数据库专项脚本 |
+| **ops / ops_arm** | 文件加解密工具，支持自定义密钥 |
 
 ## 使用方式
 
@@ -56,10 +56,16 @@ python3 /opt/aio/scripts/aio-collect-logs.py <task_id>
 
 ## 版本信息
 
-- 当前版本: **2.0.4**
-- 发布日期: 2026-06-23
+- 当前版本: **2.1.1**
+- 发布日期: 2026-07-06
 
 ## 更新日志
+
+### v2.1.1 (2026-07-06)
+- 修复 aio-diagnose.py 服务日志路径识别，支持 `logs/service/*/*.log` 和 `.log.gz` 轮转日志
+- 修复 aio-diagnose.py 服务日志时间窗口过滤
+- 修复 check_aiopool_usage.py 在 Worker 快照命令超时时直接退出的问题
+- 补充 ops / ops_arm 自定义密钥长度说明：16、24 或 32 字节
 
 ### v2.0.4 (2026-06-23)
 - 新增 Worker 性能分析工具，支持自动发现 Worker

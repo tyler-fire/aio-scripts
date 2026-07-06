@@ -4,9 +4,10 @@
 
 set -e
 
-VERSION="2.1.0"
+VERSION="2.1.1"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUTPUT_FILE="$SCRIPT_DIR/aio-scripts.install"
+OUTPUT_TMP="$OUTPUT_FILE.tmp.$$"
 TEMP_DIR="/tmp/aio-scripts-build-$$"
 GITHUB_REPO="tyler-fire/aio-scripts"
 GITHUB_TOKEN=""  # 从环境变量或配置文件读取
@@ -39,7 +40,9 @@ CORE_TOOLS=(
     "aio-unlock-tasks.py"
     "aio-collect-v.sh"
     "check_aiopool_usage.py"
+    "license.sh"
     "ops"
+    "ops_arm"
 )
 
 echo "▸ 复制工具文件..."
@@ -60,10 +63,10 @@ tar czf tools.tar.gz *
 echo "▸ 生成自解压安装脚本..."
 
 # 生成安装脚本头部
-cat > "$OUTPUT_FILE" << 'EOF'
+cat > "$OUTPUT_TMP" << 'EOF'
 #!/bin/bash
 # AIO 运维工具集安装脚本（自解压）
-# 版本: 2.1.0
+# 版本: 2.1.1
 
 set -e
 
@@ -108,7 +111,9 @@ CORE_TOOLS=(
     "aio-unlock-tasks.py"
     "aio-collect-v.sh"
     "check_aiopool_usage.py"
+    "license.sh"
     "ops"
+    "ops_arm"
 )
 
 # 复制核心工具
@@ -121,6 +126,19 @@ for tool in "${CORE_TOOLS[@]}"; do
         echo "  ✗ $tool (文件不存在)"
     fi
 done
+
+ARCH=$(uname -m)
+case "$ARCH" in
+    x86_64|amd64)
+        echo "  当前架构: $ARCH，默认使用: $INSTALL_DIR/ops"
+        ;;
+    aarch64|arm64)
+        echo "  当前架构: $ARCH，默认使用: $INSTALL_DIR/ops_arm"
+        ;;
+    *)
+        echo "  当前架构: $ARCH，请按平台选择 ops 或 ops_arm"
+        ;;
+esac
 
 # 验证安装
 echo ""
@@ -159,8 +177,9 @@ __ARCHIVE_BELOW__
 EOF
 
 # 追加压缩包数据
-cat tools.tar.gz >> "$OUTPUT_FILE"
-chmod +x "$OUTPUT_FILE"
+cat tools.tar.gz >> "$OUTPUT_TMP"
+chmod +x "$OUTPUT_TMP"
+mv -f "$OUTPUT_TMP" "$OUTPUT_FILE"
 
 # 清理临时目录
 cd /
@@ -213,10 +232,12 @@ if [[ "$publish" =~ ^[Yy]$ ]]; then
 
     # 2. 创建新 Release
     echo "  创建新 Release v${VERSION}..."
-    RELEASE_BODY="## 🚀 本次更新
+RELEASE_BODY="## 本次更新
 
-- **aio-collect-logs.py 子任务过滤** - 新增 \`--failed-only\`(仅收失败子任务)和 \`--subtask <ids>\`(仅收指定子任务ID)参数。10 个子任务只有 1 个失败时,直接 \`--failed-only\` 即可,日志包体积缩到 1/10,翻日志不再大海捞针
-- **aio-collect-logs.py 帮助文本更新** - 帮助中补充了上述场景的典型示例
+- **aio-diagnose.py 服务日志收集修复** - 按真实目录 \`/opt/aio/logs/service/*/*.log\` 和 \`.log.gz\` 轮转日志扫描，不再只找平铺的 \`cdm.log\`、\`worker.log\`。
+- **aio-diagnose.py 时间窗口过滤修复** - 服务日志会按任务开始/结束时间前后 5 分钟提取，避免把无关时间段日志打进诊断包。
+- **check_aiopool_usage.py 超时容错** - Worker 快照明细命令超时时只提示错误，保留池总览和汇总表，不再中断整次检查。
+- **ops 使用说明修正** - 自定义 \`--key\` 明确要求 16、24 或 32 字节，示例改为可直接使用的 16 字节密钥。
 
 ## 📦 安装方式
 
@@ -225,24 +246,24 @@ wget https://github.com/$GITHUB_REPO/releases/download/v${VERSION}/aio-scripts.i
 bash aio-scripts.install
 \`\`\`
 
-## 🛠️ 包含工具
+## 包含工具
 
 - aio-tools.sh - 运维工具菜单
-- aio-diagnose.py - 问题诊断（AI 辅助）
+- aio-diagnose.py - 任务诊断
 - aio-worker-performance.py - Worker 性能分析（新增自动发现）
 - aio-collect-logs.py - 日志收集（新增子任务过滤）
 - aio-unlock-tasks.py - 任务解锁
 - aio-fsdeamon-cleanup.sh - fsdeamon 清理
 - check_aiopool_usage.py - aiopool 空间检查
 - aio-collect-v.sh - 版本信息收集
-- ops - 数据库专项脚本
+- ops - 文件加解密工具
 
 ## 📝 更新日志
 
-- aio-collect-logs.py 新增 --failed-only / --subtask 子任务过滤
-- 过滤行为已用真实任务 19459 验证通过(含边界条件)
-- 此前 (v2.0.5): check_aiopool_usage.py 多 Worker 存储汇总表
-- 此前: Worker 性能分析自动发现、表格化输出、RPC 错误提示"
+- aio-diagnose.py 1.0.1: 修复服务日志路径和时间窗口过滤
+- check_aiopool_usage.py 1.1.1: 修复 RPC 超时崩溃
+- aio-tools.sh 1.2.1: 补充 ops 自定义密钥长度说明
+- 此前: aio-collect-logs.py 新增 --failed-only / --subtask 子任务过滤"
 
     RELEASE_RESPONSE=$(curl -s -X POST \
         -H "Accept: application/vnd.github+json" \

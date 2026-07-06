@@ -6,7 +6,6 @@ AIO任务日志收集工具
 
 v2.1.0: 新增 --failed-only(仅收集失败子任务) 和 --subtask <ids>(仅收集指定子任务ID)
         适用于多子任务中只有个别失败的场景,大幅减少日志包体积
-"""
 
 功能:
   根据任务ID，通过RPC从所有相关Worker节点收集各阶段日志（含重试日志），
@@ -645,7 +644,7 @@ def main():
     if len(sys.argv) >= 2 and sys.argv[1] in ('--help', '-h'):
         print("AIO任务日志收集工具 v{}".format(VERSION))
         print("")
-        print("用法: python3 collect_task_logs.py <task_id> [选项]")
+        print("用法: python3 aio-collect-logs.py <task_id> [选项]")
         print("")
         print("说明:")
         print("  根据任务ID，通过RPC从所有相关Worker收集各阶段日志（含重试）")
@@ -661,11 +660,11 @@ def main():
         print("                       (--failed-only 与 --subtask 不能同时使用)")
         print("")
         print("示例:")
-        print("  python3 collect_task_logs.py 12147")
-        print("  python3 collect_task_logs.py 12147 --stages backup,record")
-        print("  python3 collect_task_logs.py 233 --failed-only")
-        print("  python3 collect_task_logs.py 233 --failed-only --stages backup")
-        print("  python3 collect_task_logs.py 233 --subtask 1024")
+        print("  python3 aio-collect-logs.py 12147")
+        print("  python3 aio-collect-logs.py 12147 --stages backup,record")
+        print("  python3 aio-collect-logs.py 233 --failed-only")
+        print("  python3 aio-collect-logs.py 233 --failed-only --stages backup")
+        print("  python3 aio-collect-logs.py 233 --subtask 1024")
         print("")
         print("输出:")
         print("  /tmp/aio_collected_logs/task_<id>_logs_<timestamp>.tar.gz")
@@ -689,7 +688,7 @@ def main():
         sys.exit(0)
 
     if len(sys.argv) < 2:
-        print("用法: python3 collect_task_logs.py <task_id> [--stages stage1,stage2,...]")
+        print("用法: python3 aio-collect-logs.py <task_id> [--stages stage1,stage2,...]")
         sys.exit(1)
 
     try:
