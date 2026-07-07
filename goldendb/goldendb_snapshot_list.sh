@@ -5,13 +5,11 @@ set -o pipefail
 usage() {
     cat <<'EOF'
 Usage:
-  list_goldendb_snapshots.sh [pattern]
+  goldendb_snapshot_list.sh [pattern]
 
 Examples:
-  list_goldendb_snapshots.sh            # show snapshots with "goldendb"
-  list_goldendb_snapshots.sh goldendb_log
-  list_goldendb_snapshots.sh 192.168.1.56
-  list_goldendb_snapshots.sh all        # show all snapshots
+  goldendb_snapshot_list.sh             # show snapshots with "goldendb"
+  goldendb_snapshot_list.sh all         # show all snapshots
 EOF
 }
 

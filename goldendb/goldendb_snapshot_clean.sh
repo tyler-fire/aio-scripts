@@ -2,38 +2,31 @@
 
 set -euo pipefail
 
-START_DATE=""
 END_DATE=""
-KIND="data"
 PATTERN=""
 EXECUTE=false
 RECURSIVE=false
-ALLOW_ALL=false
 
 usage() {
     cat <<'EOF'
 Usage:
-  generate_goldendb_snapshot_destroy.sh -s START_DATE -e END_DATE [options]
+  goldendb_snapshot_clean.sh -e END_DATE [options]
 
 Options:
-  -s  Start date, format: YYYY-MM-DD. Required.
-  -e  End date, format: YYYY-MM-DD. Required.
-  -k  Snapshot kind: data, log, gtmlog, all. Default: data.
-      all matches GoldenDB data, log, and gtmlog snapshots and requires -A.
+  -e  Delete snapshots up to this date, format: YYYY-MM-DD. Required.
   -p  Extra snapshot name pattern, such as 192.168.1.56 or 419.
+      The script always processes GoldenDB data, log, and gtmlog ZFS snapshots together.
   -x  Execute deletion after printing candidates and typing YES.
       Without -x, this script only previews candidates.
   -d  Preview only. Kept for compatibility; same as omitting -x.
   -R  Use "zfs destroy -R" and include snapshots with clones.
       Dangerous: -R can destroy dependent clones, such as mounted copies.
-  -A  Allow -k all. Dangerous: this can target all GoldenDB snapshot types.
   -h  Show this help.
 
 Examples:
-  generate_goldendb_snapshot_destroy.sh -s 2026-06-01 -e 2026-06-30
-  generate_goldendb_snapshot_destroy.sh -s 2026-06-01 -e 2026-06-30 -k log
-  generate_goldendb_snapshot_destroy.sh -s 2026-06-01 -e 2026-06-30 -k gtmlog -p 192.168.1.56
-  generate_goldendb_snapshot_destroy.sh -s 2026-06-01 -e 2026-06-30 -x
+  goldendb_snapshot_clean.sh -e 2026-06-30
+  goldendb_snapshot_clean.sh -e 2026-06-30 -p 192.168.1.56
+  goldendb_snapshot_clean.sh -e 2026-06-30 -x
 EOF
 }
 
@@ -56,34 +49,13 @@ is_goldendb_snapshot() {
     [[ "$snapshot_name" =~ $regex ]]
 }
 
-snapshot_kind_matches() {
-    local snapshot_name="$1"
-    local data_regex='^aiopool/([0-9]{1,3}\.){3}[0-9]{1,3}_[0-9]+_goldendb@'
-    local log_regex='^aiopool/([0-9]{1,3}\.){3}[0-9]{1,3}_[0-9]+_goldendb_log@'
-    local gtmlog_regex='^aiopool/([0-9]{1,3}\.){3}[0-9]{1,3}_[0-9]+_goldendb_gtmlog@'
-
-    case "$KIND" in
-        data) [[ "$snapshot_name" =~ $data_regex ]] ;;
-        log) [[ "$snapshot_name" =~ $log_regex ]] ;;
-        gtmlog) [[ "$snapshot_name" =~ $gtmlog_regex ]] ;;
-        all) is_goldendb_snapshot "$snapshot_name" ;;
-        *)
-            echo "ERROR: invalid kind '$KIND', expected data, log, gtmlog, or all" >&2
-            exit 1
-            ;;
-    esac
-}
-
-while getopts "s:e:k:p:xdRAh" opt; do
+while getopts "e:p:xdRh" opt; do
     case "$opt" in
-        s) START_DATE="$OPTARG" ;;
         e) END_DATE="$OPTARG" ;;
-        k) KIND="$OPTARG" ;;
         p) PATTERN="$OPTARG" ;;
         x) EXECUTE=true ;;
         d) EXECUTE=false ;;
         R) RECURSIVE=true ;;
-        A) ALLOW_ALL=true ;;
         h)
             usage
             exit 0
@@ -95,34 +67,15 @@ while getopts "s:e:k:p:xdRAh" opt; do
     esac
 done
 
-if [[ -z "$START_DATE" || -z "$END_DATE" ]]; then
+if [[ -z "$END_DATE" ]]; then
     usage >&2
-    echo "ERROR: -s and -e are required" >&2
+    echo "ERROR: -e is required" >&2
     exit 1
 fi
 
-validate_date "$START_DATE"
 validate_date "$END_DATE"
 
-case "$KIND" in
-    data|log|gtmlog|all) ;;
-    *)
-        echo "ERROR: invalid kind '$KIND', expected data, log, gtmlog, or all" >&2
-        exit 1
-        ;;
-esac
-
-if [[ "$KIND" == "all" && "$ALLOW_ALL" != true ]]; then
-    echo "ERROR: -k all requires -A because it targets all GoldenDB snapshot types" >&2
-    exit 1
-fi
-
-start_epoch=$(date -d "$START_DATE 00:00:00" +%s)
 end_epoch=$(date -d "$END_DATE 23:59:59" +%s)
-if (( start_epoch > end_epoch )); then
-    echo "ERROR: START_DATE must not be later than END_DATE" >&2
-    exit 1
-fi
 
 if ! command -v zfs >/dev/null 2>&1; then
     echo "ERROR: zfs command not found" >&2
@@ -141,10 +94,6 @@ while IFS=$'\t' read -r snapshot_name used refer; do
     [[ -n "$snapshot_name" ]] || continue
 
     if ! is_goldendb_snapshot "$snapshot_name"; then
-        continue
-    fi
-
-    if ! snapshot_kind_matches "$snapshot_name"; then
         continue
     fi
 
@@ -167,7 +116,7 @@ while IFS=$'\t' read -r snapshot_name used refer; do
         continue
     fi
 
-    if (( snapshot_epoch < start_epoch || snapshot_epoch > end_epoch )); then
+    if (( snapshot_epoch > end_epoch )); then
         continue
     fi
 
@@ -195,9 +144,9 @@ error_count=$(awk -F '\t' '$1 == "SKIP_ERROR" {count++} END {print count + 0}' "
 
 echo
 echo "GoldenDB snapshot destroy candidates"
-echo "Kind:    $KIND"
+echo "Scope:   data, log, and gtmlog ZFS snapshots"
 echo "Pattern: ${PATTERN:-<none>}"
-echo "Range:   $START_DATE 00:00:00 to $END_DATE 23:59:59"
+echo "Range:   <= $END_DATE 23:59:59"
 echo "Mode:    $([[ "$EXECUTE" == true ]] && echo execute || echo preview)"
 echo "Delete:  $delete_count"
 echo "Skipped snapshots with clones: $skip_count"

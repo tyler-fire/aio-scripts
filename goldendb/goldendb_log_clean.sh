@@ -10,7 +10,7 @@ EXECUTE=false
 usage() {
     cat <<'EOF'
 Usage:
-  clean_goldendb_log_files.sh -b BEFORE_DATE [options]
+  goldendb_log_clean.sh -b BEFORE_DATE [options]
 
 Options:
   -b  Delete files older than this date, format: YYYY-MM-DD. Required.
@@ -24,10 +24,10 @@ Options:
   -h  Show this help.
 
 Examples:
-  clean_goldendb_log_files.sh -b 2026-05-07
-  clean_goldendb_log_files.sh -b 2026-05-07 -k log
-  clean_goldendb_log_files.sh -b 2026-05-07 -k gtmlog -p 192.168.1.56
-  clean_goldendb_log_files.sh -b 2026-05-07 -x
+  goldendb_log_clean.sh -b 2026-05-07
+  goldendb_log_clean.sh -b 2026-05-07 -k log
+  goldendb_log_clean.sh -b 2026-05-07 -k gtmlog -p 192.168.1.56
+  goldendb_log_clean.sh -b 2026-05-07 -x
 EOF
 }
 
