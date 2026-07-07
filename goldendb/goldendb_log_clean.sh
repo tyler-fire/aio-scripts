@@ -239,8 +239,10 @@ fi
 
 echo
 echo "This will delete $total_files files under the matched GoldenDB log mountpoints."
-read -r -p "Type YES to continue: " confirm
-if [[ "$confirm" != "YES" ]]; then
+confirm_phrase="DELETE_LOGS_TO_${END_DATE}"
+echo "This operation can make older backup points unrecoverable if END_DATE is wrong."
+read -r -p "Type ${confirm_phrase} to continue: " confirm
+if [[ "$confirm" != "$confirm_phrase" ]]; then
     echo "Cancelled"
     exit 1
 fi
