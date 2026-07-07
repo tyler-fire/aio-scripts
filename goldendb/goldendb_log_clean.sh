@@ -2,32 +2,27 @@
 
 set -euo pipefail
 
-BEFORE_DATE=""
-KIND="all"
+END_DATE=""
 PATTERN=""
 EXECUTE=false
 
 usage() {
     cat <<'EOF'
 Usage:
-  goldendb_log_clean.sh -b BEFORE_DATE [options]
+  goldendb_log_clean.sh -e END_DATE [options]
 
 Options:
-  -b  Delete files older than this date, format: YYYY-MM-DD. Required.
-      The matched files have mtime earlier than or equal to BEFORE_DATE 00:00:00.
-  -k  Log kind: all, log, gtmlog. Default: all.
-      all    matches *_goldendb_log and *_goldendb_gtmlog
-      log    matches *_goldendb_log
-      gtmlog matches *_goldendb_gtmlog
+  -e  Delete log files up to this date, format: YYYY-MM-DD. Required.
+      The matched files have mtime earlier than or equal to END_DATE 00:00:00.
   -p  Extra mountpoint pattern, such as 192.168.1.56 or 419.
+      The script always processes GoldenDB log and gtmlog files together.
   -x  Execute deletion. Without -x, this script only previews candidates.
   -h  Show this help.
 
 Examples:
-  goldendb_log_clean.sh -b 2026-05-07
-  goldendb_log_clean.sh -b 2026-05-07 -k log
-  goldendb_log_clean.sh -b 2026-05-07 -k gtmlog -p 192.168.1.56
-  goldendb_log_clean.sh -b 2026-05-07 -x
+  goldendb_log_clean.sh -e 2026-05-07
+  goldendb_log_clean.sh -e 2026-05-07 -p 192.168.1.56
+  goldendb_log_clean.sh -e 2026-05-07 -x
 EOF
 }
 
@@ -67,39 +62,23 @@ match_mountpoint() {
     local mountpoint="$1"
 
     is_goldendb_log_mountpoint "$mountpoint" || return 1
-
-    case "$KIND" in
-        all)
-            [[ "$mountpoint" == /volmountpoint/aiopool/*_goldendb_log || "$mountpoint" == /volmountpoint/aiopool/*_goldendb_gtmlog ]]
-            ;;
-        log)
-            [[ "$mountpoint" == /volmountpoint/aiopool/*_goldendb_log ]]
-            ;;
-        gtmlog)
-            [[ "$mountpoint" == /volmountpoint/aiopool/*_goldendb_gtmlog ]]
-            ;;
-        *)
-            echo "ERROR: invalid kind '$KIND', expected all, log, or gtmlog" >&2
-            exit 1
-            ;;
-    esac
+    [[ "$mountpoint" == /volmountpoint/aiopool/*_goldendb_log || "$mountpoint" == /volmountpoint/aiopool/*_goldendb_gtmlog ]]
 }
 
 print_candidates() {
     local dir="$1"
 
     if [[ "$dir" == *_goldendb_log ]]; then
-        find "$dir" -xdev -path "$dir/binlog_*/*" -type f -name 'mysql-bin.*' ! -newermt "$BEFORE_DATE" -print
+        find "$dir" -xdev -path "$dir/binlog_*/*" -type f -name 'mysql-bin.*' ! -newermt "$END_DATE" -print
     elif [[ "$dir" == *_goldendb_gtmlog ]]; then
         find "$dir" -xdev -path "$dir/active_trans/Active_TX_Archive/*" -type f \
-            -name 'DBCluster_*_Active_TX_info.*' ! -name '*.index' ! -newermt "$BEFORE_DATE" -print
+            -name 'DBCluster_*_Active_TX_info.*' ! -name '*.index' ! -newermt "$END_DATE" -print
     fi
 }
 
-while getopts "b:k:p:xh" opt; do
+while getopts "e:p:xh" opt; do
     case "$opt" in
-        b) BEFORE_DATE="$OPTARG" ;;
-        k) KIND="$OPTARG" ;;
+        e) END_DATE="$OPTARG" ;;
         p) PATTERN="$OPTARG" ;;
         x) EXECUTE=true ;;
         h)
@@ -113,24 +92,16 @@ while getopts "b:k:p:xh" opt; do
     esac
 done
 
-if [[ -z "$BEFORE_DATE" ]]; then
+if [[ -z "$END_DATE" ]]; then
     usage >&2
-    echo "ERROR: -b BEFORE_DATE is required" >&2
+    echo "ERROR: -e is required" >&2
     exit 1
 fi
 
-validate_date "$BEFORE_DATE"
+validate_date "$END_DATE"
 
-case "$KIND" in
-    all|log|gtmlog) ;;
-    *)
-        echo "ERROR: invalid kind '$KIND', expected all, log, or gtmlog" >&2
-        exit 1
-        ;;
-esac
-
-if is_future_date "$BEFORE_DATE"; then
-    echo "ERROR: future BEFORE_DATE is not allowed: $BEFORE_DATE" >&2
+if is_future_date "$END_DATE"; then
+    echo "ERROR: future END_DATE is not allowed: $END_DATE" >&2
     exit 1
 fi
 
@@ -151,15 +122,13 @@ mapfile -t dirs < <(
 
 if (( ${#dirs[@]} == 0 )); then
     echo "No GoldenDB log mountpoints found"
-    echo "Kind: $KIND"
     echo "Pattern: ${PATTERN:-<none>}"
     exit 0
 fi
 
 echo
 echo "GoldenDB log cleanup"
-echo "Before date: $BEFORE_DATE 00:00:00"
-echo "Kind:        $KIND"
+echo "Range:       <= $END_DATE 00:00:00"
 echo "Pattern:     ${PATTERN:-<none>}"
 echo "Mode:        $([[ "$EXECUTE" == true ]] && echo execute || echo preview)"
 echo
@@ -170,7 +139,7 @@ for dir in "${dirs[@]}"; do
 done
 
 echo
-echo "Counting cleanup candidates older than $BEFORE_DATE..."
+echo "Counting cleanup candidates up to $END_DATE 00:00:00..."
 echo "Scope:"
 echo "  *_goldendb_log:    binlog_* / mysql-bin.* only"
 echo "  *_goldendb_gtmlog: active_trans/Active_TX_Archive / DBCluster_*_Active_TX_info.* except *.index"
