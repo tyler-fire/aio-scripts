@@ -80,6 +80,24 @@ format_bytes() {
         }'
 }
 
+highlight() {
+    local text="$1"
+    if [[ -t 1 ]]; then
+        printf '\033[1;32m%s\033[0m\n' "$text"
+    else
+        printf '%s\n' "$text"
+    fi
+}
+
+bold() {
+    local text="$1"
+    if [[ -t 1 ]]; then
+        printf '\033[1m%s\033[0m\n' "$text"
+    else
+        printf '%s\n' "$text"
+    fi
+}
+
 get_pool_usage() {
     if ! command -v zpool >/dev/null 2>&1; then
         echo "unavailable: zpool command not found"
@@ -202,8 +220,8 @@ echo "Mode:    $([[ "$EXECUTE" == true ]] && echo execute || echo preview)"
 echo "Delete:  $delete_count"
 echo "Skipped snapshots with clones: $skip_count"
 echo "Skipped snapshots with errors: $error_count"
-echo "Pool $POOL_NAME: $(get_pool_usage)"
-echo "Estimated reclaim by DELETE: $reclaim_human"
+bold "Pool $POOL_NAME: $(get_pool_usage)"
+highlight "Estimated reclaim by DELETE: $reclaim_human"
 echo
 
 if (( delete_count > 0 )); then

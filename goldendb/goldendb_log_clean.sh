@@ -65,6 +65,24 @@ format_bytes() {
         }'
 }
 
+highlight() {
+    local text="$1"
+    if [[ -t 1 ]]; then
+        printf '\033[1;32m%s\033[0m\n' "$text"
+    else
+        printf '%s\n' "$text"
+    fi
+}
+
+bold() {
+    local text="$1"
+    if [[ -t 1 ]]; then
+        printf '\033[1m%s\033[0m\n' "$text"
+    else
+        printf '%s\n' "$text"
+    fi
+}
+
 get_pool_usage() {
     if ! command -v zpool >/dev/null 2>&1; then
         echo "unavailable: zpool command not found"
@@ -195,8 +213,8 @@ done
 
 echo
 echo "Total matched files: $total_files"
-echo "Pool $POOL_NAME: $(get_pool_usage)"
-echo "Estimated reclaim by DELETE: $(format_bytes "$total_bytes")"
+bold "Pool $POOL_NAME: $(get_pool_usage)"
+highlight "Estimated reclaim by DELETE: $(format_bytes "$total_bytes")"
 
 if (( total_files == 0 )); then
     exit 0
