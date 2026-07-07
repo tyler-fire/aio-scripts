@@ -1,5 +1,16 @@
 #!/bin/bash
 
+if [ -z "${BASH_VERSION:-}" ]; then
+    if command -v bash >/dev/null 2>&1; then
+        exec bash "$0" "$@"
+    fi
+    echo "ERROR: bash is required" >&2
+    exit 1
+fi
+if set -o | grep -q '^posix[[:space:]]*on'; then
+    exec bash "$0" "$@"
+fi
+
 set -o pipefail
 
 usage() {
