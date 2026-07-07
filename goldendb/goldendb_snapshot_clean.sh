@@ -6,6 +6,7 @@ END_DATE=""
 PATTERN=""
 EXECUTE=false
 RECURSIVE=false
+POOL_NAME="aiopool"
 
 usage() {
     cat <<'EOF'
@@ -40,6 +41,53 @@ validate_date() {
     if [[ "$(date -d "$value" "+%Y-%m-%d" 2>/dev/null || true)" != "$value" ]]; then
         echo "ERROR: invalid calendar date '$value'" >&2
         exit 1
+    fi
+}
+
+human_to_bytes() {
+    local value="$1"
+    awk -v value="$value" '
+        BEGIN {
+            if (value == "-" || value == "") { print 0; exit }
+            number = value
+            unit = value
+            sub(/[KMGTPE]?$/, "", number)
+            sub(/^[0-9.]+/, "", unit)
+            multiplier = 1
+            if (unit == "K") multiplier = 1024
+            else if (unit == "M") multiplier = 1024^2
+            else if (unit == "G") multiplier = 1024^3
+            else if (unit == "T") multiplier = 1024^4
+            else if (unit == "P") multiplier = 1024^5
+            else if (unit == "E") multiplier = 1024^6
+            printf "%.0f\n", number * multiplier
+        }'
+}
+
+format_bytes() {
+    local bytes="$1"
+    awk -v bytes="$bytes" '
+        BEGIN {
+            split("B K M G T P E", units, " ")
+            value = bytes + 0
+            unit_index = 1
+            while (value >= 1024 && unit_index < 7) {
+                value = value / 1024
+                unit_index++
+            }
+            if (unit_index == 1) printf "%.0fB\n", value
+            else printf "%.2f%s\n", value, units[unit_index]
+        }'
+}
+
+get_pool_usage() {
+    if ! command -v zpool >/dev/null 2>&1; then
+        echo "unavailable: zpool command not found"
+        return
+    fi
+
+    if ! zpool list -H -o size,alloc,free,cap "$POOL_NAME" 2>/dev/null | awk '{printf "size=%s alloc=%s free=%s cap=%s", $1, $2, $3, $4}'; then
+        echo "unavailable: failed to read zpool $POOL_NAME"
     fi
 }
 
@@ -135,12 +183,15 @@ while IFS=$'\t' read -r snapshot_name used refer; do
         continue
     fi
 
-    printf "DELETE\t%s\t%s\t%s\t%s\t%s\n" "$snapshot_name" "$used" "$refer" "$datetime" "$clones" >> "$tmp_candidates"
+    used_bytes=$(human_to_bytes "$used")
+    printf "DELETE\t%s\t%s\t%s\t%s\t%s\t%s\n" "$snapshot_name" "$used" "$refer" "$datetime" "$clones" "$used_bytes" >> "$tmp_candidates"
 done <<< "$snapshot_rows"
 
 delete_count=$(awk -F '\t' '$1 == "DELETE" {count++} END {print count + 0}' "$tmp_candidates")
 skip_count=$(awk -F '\t' '$1 == "SKIP_CLONE" {count++} END {print count + 0}' "$tmp_candidates")
 error_count=$(awk -F '\t' '$1 == "SKIP_ERROR" {count++} END {print count + 0}' "$tmp_candidates")
+reclaim_bytes=$(awk -F '\t' '$1 == "DELETE" {sum += $7} END {printf "%.0f\n", sum + 0}' "$tmp_candidates")
+reclaim_human=$(format_bytes "$reclaim_bytes")
 
 echo
 echo "GoldenDB snapshot destroy candidates"
@@ -151,6 +202,8 @@ echo "Mode:    $([[ "$EXECUTE" == true ]] && echo execute || echo preview)"
 echo "Delete:  $delete_count"
 echo "Skipped snapshots with clones: $skip_count"
 echo "Skipped snapshots with errors: $error_count"
+echo "Pool $POOL_NAME: $(get_pool_usage)"
+echo "Estimated reclaim by DELETE: $reclaim_human"
 echo
 
 if (( delete_count > 0 )); then
@@ -198,7 +251,7 @@ fi
 
 echo "Start destroying snapshots..."
 destroyed_count=0
-while IFS=$'\t' read -r action snapshot_name _used _refer datetime _clones; do
+while IFS=$'\t' read -r action snapshot_name _used _refer datetime _clones _used_bytes; do
     [[ "$action" == "DELETE" ]] || continue
     if [[ "$RECURSIVE" == true ]]; then
         zfs destroy -R "$snapshot_name"

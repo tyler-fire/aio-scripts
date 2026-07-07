@@ -5,6 +5,7 @@ set -euo pipefail
 END_DATE=""
 PATTERN=""
 EXECUTE=false
+POOL_NAME="aiopool"
 
 usage() {
     cat <<'EOF'
@@ -48,6 +49,33 @@ is_future_date() {
     (( value_epoch > today_epoch ))
 }
 
+format_bytes() {
+    local bytes="$1"
+    awk -v bytes="$bytes" '
+        BEGIN {
+            split("B K M G T P E", units, " ")
+            value = bytes + 0
+            unit_index = 1
+            while (value >= 1024 && unit_index < 7) {
+                value = value / 1024
+                unit_index++
+            }
+            if (unit_index == 1) printf "%.0fB\n", value
+            else printf "%.2f%s\n", value, units[unit_index]
+        }'
+}
+
+get_pool_usage() {
+    if ! command -v zpool >/dev/null 2>&1; then
+        echo "unavailable: zpool command not found"
+        return
+    fi
+
+    if ! zpool list -H -o size,alloc,free,cap "$POOL_NAME" 2>/dev/null | awk '{printf "size=%s alloc=%s free=%s cap=%s", $1, $2, $3, $4}'; then
+        echo "unavailable: failed to read zpool $POOL_NAME"
+    fi
+}
+
 is_goldendb_log_mountpoint() {
     local mountpoint="$1"
     local base
@@ -69,10 +97,10 @@ print_candidates() {
     local dir="$1"
 
     if [[ "$dir" == *_goldendb_log ]]; then
-        find "$dir" -xdev -path "$dir/binlog_*/*" -type f -name 'mysql-bin.*' ! -newermt "$END_DATE" -print
+        find "$dir" -xdev -path "$dir/binlog_*/*" -type f -name 'mysql-bin.*' ! -newermt "$END_DATE" -printf '%s\t%p\n'
     elif [[ "$dir" == *_goldendb_gtmlog ]]; then
         find "$dir" -xdev -path "$dir/active_trans/Active_TX_Archive/*" -type f \
-            -name 'DBCluster_*_Active_TX_info.*' ! -name '*.index' ! -newermt "$END_DATE" -print
+            -name 'DBCluster_*_Active_TX_info.*' ! -name '*.index' ! -newermt "$END_DATE" -printf '%s\t%p\n'
     fi
 }
 
@@ -149,19 +177,26 @@ tmp_candidates=$(mktemp "/tmp/goldendb_log_cleanup.XXXXXX")
 trap 'rm -f "$tmp_candidates"' EXIT
 
 total_files=0
+total_bytes=0
 for dir in "${dirs[@]}"; do
     before_count=$(wc -l < "$tmp_candidates")
-    while IFS= read -r file_path; do
-        printf "%s\t%s\n" "$dir" "$file_path" >> "$tmp_candidates"
+    before_bytes=$(awk -F '\t' '{sum += $3} END {printf "%.0f\n", sum + 0}' "$tmp_candidates")
+    while IFS=$'\t' read -r file_size file_path; do
+        printf "%s\t%s\t%s\n" "$dir" "$file_path" "$file_size" >> "$tmp_candidates"
     done < <(print_candidates "$dir")
     after_count=$(wc -l < "$tmp_candidates")
+    after_bytes=$(awk -F '\t' '{sum += $3} END {printf "%.0f\n", sum + 0}' "$tmp_candidates")
     file_count=$((after_count - before_count))
+    file_bytes=$((after_bytes - before_bytes))
     total_files=$((total_files + file_count))
-    printf "%-80s %10s files\n" "$dir" "$file_count"
+    total_bytes=$((total_bytes + file_bytes))
+    printf "%-80s %10s files %12s\n" "$dir" "$file_count" "$(format_bytes "$file_bytes")"
 done
 
 echo
 echo "Total matched files: $total_files"
+echo "Pool $POOL_NAME: $(get_pool_usage)"
+echo "Estimated reclaim by DELETE: $(format_bytes "$total_bytes")"
 
 if (( total_files == 0 )); then
     exit 0
@@ -185,7 +220,7 @@ deleted_count=0
 for dir in "${dirs[@]}"; do
     echo "Cleaning: $dir"
     deleted_in_dir=0
-    while IFS=$'\t' read -r candidate_dir file_path; do
+    while IFS=$'\t' read -r candidate_dir file_path _file_size; do
         [[ "$candidate_dir" == "$dir" ]] || continue
         if rm -- "$file_path"; then
             deleted_in_dir=$((deleted_in_dir + 1))
