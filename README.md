@@ -14,7 +14,7 @@ bash aio-scripts.install
 也可以使用 Release 包：
 
 ```bash
-wget https://github.com/tyler-fire/aio-scripts/releases/download/v2.1.6/aio-scripts.install
+wget https://github.com/tyler-fire/aio-scripts/releases/download/v2.1.7/aio-scripts.install
 bash aio-scripts.install
 ```
 
@@ -69,10 +69,16 @@ bash goldendb_log_clean.sh -e 2026-07-07
 
 ## 版本信息
 
-- 当前版本: **2.1.6**
+- 当前版本: **2.1.7**
 - 发布日期: 2026-07-07
 
 ## 更新日志
+
+### v2.1.7 (2026-07-07)
+
+- RPC 工具路径恢复为优先使用 `uname -m` 原始值，例如 ARM Linux 上通常是 `aarch64`。
+- 只有原始路径不存在时，才 fallback `amd64 -> x86_64`、`arm64 -> aarch64`。
+- 避免改变已有 ARM Worker 的 `/opt/aio/airflow/tools/rpc/$(uname -m)/rpc` 行为。
 
 ### v2.1.6 (2026-07-07)
 

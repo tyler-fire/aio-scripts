@@ -5,16 +5,11 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 RPC_PORT="${RPC_PORT:-6611}"
 RPC_TIMEOUT="${RPC_TIMEOUT:-15}"
 RAW_ARCH="$(uname -m)"
-case "$RAW_ARCH" in
-    x86_64|amd64) RPC_ARCH="x86_64" ;;
-    aarch64|arm64) RPC_ARCH="aarch64" ;;
-    *) RPC_ARCH="$RAW_ARCH" ;;
-esac
-RPC_BIN="/opt/aio/airflow/tools/rpc/$RPC_ARCH/rpc"
-if [[ ! -x "$RPC_BIN" && "$RPC_ARCH" == "aarch64" && -x "/opt/aio/airflow/tools/rpc/arm64/rpc" ]]; then
-    RPC_BIN="/opt/aio/airflow/tools/rpc/arm64/rpc"
-elif [[ ! -x "$RPC_BIN" && "$RPC_ARCH" == "x86_64" && -x "/opt/aio/airflow/tools/rpc/amd64/rpc" ]]; then
-    RPC_BIN="/opt/aio/airflow/tools/rpc/amd64/rpc"
+RPC_BIN="/opt/aio/airflow/tools/rpc/$RAW_ARCH/rpc"
+if [[ ! -x "$RPC_BIN" && "$RAW_ARCH" == "amd64" && -x "/opt/aio/airflow/tools/rpc/x86_64/rpc" ]]; then
+    RPC_BIN="/opt/aio/airflow/tools/rpc/x86_64/rpc"
+elif [[ ! -x "$RPC_BIN" && "$RAW_ARCH" == "arm64" && -x "/opt/aio/airflow/tools/rpc/aarch64/rpc" ]]; then
+    RPC_BIN="/opt/aio/airflow/tools/rpc/aarch64/rpc"
 fi
 
 # 子工具定义（文件名|功能描述）

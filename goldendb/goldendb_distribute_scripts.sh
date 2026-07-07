@@ -18,16 +18,11 @@ REMOTE_DIR="$PS_ROOT/goldendb"
 RPC_PORT="${RPC_PORT:-6611}"
 RPC_TIMEOUT="${RPC_TIMEOUT:-30}"
 RAW_ARCH="$(uname -m)"
-case "$RAW_ARCH" in
-    x86_64|amd64) RPC_ARCH="x86_64" ;;
-    aarch64|arm64) RPC_ARCH="aarch64" ;;
-    *) RPC_ARCH="$RAW_ARCH" ;;
-esac
-RPC_BIN="${RPC_BIN:-$AIO_HOME/airflow/tools/rpc/$RPC_ARCH/rpc}"
-if [[ ! -x "$RPC_BIN" && "$RPC_ARCH" == "aarch64" && -x "$AIO_HOME/airflow/tools/rpc/arm64/rpc" ]]; then
-    RPC_BIN="$AIO_HOME/airflow/tools/rpc/arm64/rpc"
-elif [[ ! -x "$RPC_BIN" && "$RPC_ARCH" == "x86_64" && -x "$AIO_HOME/airflow/tools/rpc/amd64/rpc" ]]; then
-    RPC_BIN="$AIO_HOME/airflow/tools/rpc/amd64/rpc"
+RPC_BIN="${RPC_BIN:-$AIO_HOME/airflow/tools/rpc/$RAW_ARCH/rpc}"
+if [[ ! -x "$RPC_BIN" && "$RAW_ARCH" == "amd64" && -x "$AIO_HOME/airflow/tools/rpc/x86_64/rpc" ]]; then
+    RPC_BIN="$AIO_HOME/airflow/tools/rpc/x86_64/rpc"
+elif [[ ! -x "$RPC_BIN" && "$RAW_ARCH" == "arm64" && -x "$AIO_HOME/airflow/tools/rpc/aarch64/rpc" ]]; then
+    RPC_BIN="$AIO_HOME/airflow/tools/rpc/aarch64/rpc"
 fi
 MYSQL_BIN="/usr/local/mysql/bin/mysql"
 LOCAL_TMP_ROOT="$AIO_HOME/user_tmp"

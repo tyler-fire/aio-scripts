@@ -4,7 +4,7 @@
 
 set -e
 
-VERSION="2.1.6"
+VERSION="2.1.7"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUTPUT_FILE="$SCRIPT_DIR/aio-scripts.install"
 OUTPUT_TMP="$OUTPUT_FILE.tmp.$$"
@@ -71,7 +71,7 @@ echo "▸ 生成自解压安装脚本..."
 cat > "$OUTPUT_TMP" << 'EOF'
 #!/bin/bash
 # AIO 运维工具集安装脚本（自解压）
-# 版本: 2.1.6
+# 版本: 2.1.7
 
 set -e
 
@@ -82,16 +82,11 @@ TEMP_DIR="/tmp/aio-scripts-install-$$"
 RPC_PORT="${RPC_PORT:-6611}"
 RPC_TIMEOUT="${RPC_TIMEOUT:-15}"
 RAW_ARCH="$(uname -m)"
-case "$RAW_ARCH" in
-    x86_64|amd64) RPC_ARCH="x86_64" ;;
-    aarch64|arm64) RPC_ARCH="aarch64" ;;
-    *) RPC_ARCH="$RAW_ARCH" ;;
-esac
-RPC_BIN="$AIO_HOME/airflow/tools/rpc/$RPC_ARCH/rpc"
-if [[ ! -x "$RPC_BIN" && "$RPC_ARCH" == "aarch64" && -x "$AIO_HOME/airflow/tools/rpc/arm64/rpc" ]]; then
-    RPC_BIN="$AIO_HOME/airflow/tools/rpc/arm64/rpc"
-elif [[ ! -x "$RPC_BIN" && "$RPC_ARCH" == "x86_64" && -x "$AIO_HOME/airflow/tools/rpc/amd64/rpc" ]]; then
-    RPC_BIN="$AIO_HOME/airflow/tools/rpc/amd64/rpc"
+RPC_BIN="$AIO_HOME/airflow/tools/rpc/$RAW_ARCH/rpc"
+if [[ ! -x "$RPC_BIN" && "$RAW_ARCH" == "amd64" && -x "$AIO_HOME/airflow/tools/rpc/x86_64/rpc" ]]; then
+    RPC_BIN="$AIO_HOME/airflow/tools/rpc/x86_64/rpc"
+elif [[ ! -x "$RPC_BIN" && "$RAW_ARCH" == "arm64" && -x "$AIO_HOME/airflow/tools/rpc/aarch64/rpc" ]]; then
+    RPC_BIN="$AIO_HOME/airflow/tools/rpc/aarch64/rpc"
 fi
 CURRENT_UID="$(id -u)"
 CURRENT_GID="$(id -g)"
@@ -310,7 +305,7 @@ RELEASE_BODY="## 本次更新
 - **分发安全边界** - GoldenDB 分发只上传脚本并校验 \`sha256sum\`，不远程执行快照或日志清理。
 - **GoldenDB 清理脚本修正** - snapshot 清理拒绝未来日期，执行确认改为输入 \`END_DATE\`；log 清理日期语义统一为 \`<= END_DATE 23:59:59\`。
 - **GoldenDB 普通用户执行** - snapshot/log 脚本在普通用户执行 \`-x\` 时，确认后通过本机 RPC 执行 root 删除动作，解决 \`zfs destroy\` 或文件删除权限不足。
-- **RPC 平台兼容** - RPC 路径增加平台映射，兼容 \`x86_64/amd64\` 和 \`aarch64/arm64\`。
+- **RPC 平台兼容** - RPC 路径优先使用 \`uname -m\` 原始值，找不到时再兼容 \`amd64 -> x86_64\` 和 \`arm64 -> aarch64\`。
 - **日志分析平台入口更新** - 统一使用 \`/opt/aio/ps_scripts/aio-tools.sh\` 作为运维/日志分析工具入口。
 
 ## 📦 安装方式
@@ -343,7 +338,7 @@ bash /opt/aio/ps_scripts/aio-tools.sh
 - goldendb_distribute_scripts.sh 1.0.1: 分发 3 个 GoldenDB 本地脚本到 Worker；本机临时目录权限不足时使用本机 RPC 修正
 - goldendb_snapshot_clean.sh: 增加未来日期保护，执行确认改为输入 END_DATE；普通用户执行删除时通过本机 RPC 执行 zfs destroy
 - goldendb_log_clean.sh: 清理日期统一到 END_DATE 当天 23:59:59；普通用户执行删除时通过本机 RPC 删除文件
-- RPC 路径: 增加 x86_64/amd64、aarch64/arm64 架构映射，兼容 ARM Worker
+- RPC 路径: 优先使用 uname -m 原始值，找不到时再做 amd64/arm64 fallback，避免改变已有 aarch64 ARM Worker 行为
 - 安装包: 安装目录调整为 /opt/aio/ps_scripts
 - 安装包: 创建 /opt/aio/ps_scripts 或 /opt/aio/user_tmp 权限不足时，使用本机 RPC fallback 授权"
 
