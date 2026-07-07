@@ -4,7 +4,7 @@
 
 set -e
 
-VERSION="2.1.3"
+VERSION="2.1.4"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUTPUT_FILE="$SCRIPT_DIR/aio-scripts.install"
 OUTPUT_TMP="$OUTPUT_FILE.tmp.$$"
@@ -71,23 +71,70 @@ echo "▸ 生成自解压安装脚本..."
 cat > "$OUTPUT_TMP" << 'EOF'
 #!/bin/bash
 # AIO 运维工具集安装脚本（自解压）
-# 版本: 2.1.3
+# 版本: 2.1.4
 
 set -e
 
+AIO_HOME="/opt/aio"
 INSTALL_DIR="/opt/aio/ps_scripts"
+AIO_USER_TMP="$AIO_HOME/user_tmp"
 TEMP_DIR="/tmp/aio-scripts-install-$$"
+RPC_PORT="${RPC_PORT:-6611}"
+RPC_TIMEOUT="${RPC_TIMEOUT:-15}"
+RPC_BIN="$AIO_HOME/airflow/tools/rpc/$(uname -m)/rpc"
+CURRENT_UID="$(id -u)"
+CURRENT_GID="$(id -g)"
 
 echo "========================================"
 echo " AIO 运维工具集 安装程序"
 echo "========================================"
 echo ""
 
-# 检查目标目录
-if [ ! -d "$INSTALL_DIR" ]; then
-    echo "错误: 目标目录不存在: $INSTALL_DIR"
-    exit 1
-fi
+shell_quote() {
+    printf "'%s'" "$(printf "%s" "$1" | sed "s/'/'\\\\''/g")"
+}
+
+dirs_ready() {
+    [ -d "$INSTALL_DIR" ] && [ -w "$INSTALL_DIR" ] && \
+    [ -d "$AIO_USER_TMP" ] && [ -w "$AIO_USER_TMP" ]
+}
+
+prepare_install_dirs() {
+    if [ ! -d "$AIO_HOME" ]; then
+        echo "错误: AIO目录不存在: $AIO_HOME"
+        exit 1
+    fi
+
+    mkdir -p "$INSTALL_DIR" "$AIO_USER_TMP" 2>/dev/null || true
+    chmod 755 "$INSTALL_DIR" 2>/dev/null || true
+    chmod 700 "$AIO_USER_TMP" 2>/dev/null || true
+
+    if dirs_ready; then
+        return 0
+    fi
+
+    if [ -x "$RPC_BIN" ]; then
+        echo "▸ 当前用户无法创建或写入安装目录，尝试通过本机 RPC 创建并授权..."
+        local cmd
+        local out
+        cmd="mkdir -p $(shell_quote "$INSTALL_DIR") $(shell_quote "$AIO_USER_TMP") && chown $(shell_quote "${CURRENT_UID}:${CURRENT_GID}") $(shell_quote "$INSTALL_DIR") $(shell_quote "$AIO_USER_TMP") && chmod 755 $(shell_quote "$INSTALL_DIR") && chmod 700 $(shell_quote "$AIO_USER_TMP")"
+        if ! out="$(timeout "$RPC_TIMEOUT" "$RPC_BIN" -h 127.0.0.1 -p "$RPC_PORT" -c "$cmd" 2>&1)"; then
+            echo "错误: 本机 RPC 创建目录失败"
+            echo "$out"
+            exit 1
+        fi
+    fi
+
+    if ! dirs_ready; then
+        echo "错误: 当前用户不能写入安装目录或临时目录"
+        echo "  安装目录: $INSTALL_DIR"
+        echo "  临时目录: $AIO_USER_TMP"
+        echo "请使用 root 执行，或确认本机 RPC $RPC_BIN 可用。"
+        exit 1
+    fi
+}
+
+prepare_install_dirs
 
 echo "▸ 解压工具文件..."
 mkdir -p "$TEMP_DIR"
@@ -247,6 +294,7 @@ if [[ "$publish" =~ ^[Yy]$ ]]; then
 RELEASE_BODY="## 本次更新
 
 - **安装目录调整** - 安装目标改为 \`/opt/aio/ps_scripts\`，不再依赖 \`/opt/aio/scripts\`。
+- **安装权限修正** - 安装包会自动准备 \`/opt/aio/ps_scripts\` 和 \`/opt/aio/user_tmp\`；当前用户权限不足时，尝试通过本机 RPC 创建并授权。
 - **GoldenDB 脚本分发** - \`aio-tools.sh\` 新增 \`GoldenDB脚本分发\`，通过 RPC 将 3 个本地清理脚本复制到 Worker 的 \`/opt/aio/ps_scripts/goldendb/\`。
 - **分发安全边界** - GoldenDB 分发只上传脚本并校验 \`sha256sum\`，不远程执行快照或日志清理。
 - **GoldenDB 清理脚本修正** - snapshot 清理拒绝未来日期，执行确认改为输入 \`END_DATE\`；log 清理日期语义统一为 \`<= END_DATE 23:59:59\`。
@@ -279,10 +327,11 @@ bash /opt/aio/ps_scripts/aio-tools.sh
 ## 📝 更新日志
 
 - aio-tools.sh 1.2.3: 新增 GoldenDB 脚本分发入口
-- goldendb_distribute_scripts.sh 1.0.0: 分发 3 个 GoldenDB 本地脚本到 Worker
+- goldendb_distribute_scripts.sh 1.0.1: 分发 3 个 GoldenDB 本地脚本到 Worker；本机临时目录权限不足时使用本机 RPC 修正
 - goldendb_snapshot_clean.sh: 增加未来日期保护，执行确认改为输入 END_DATE
 - goldendb_log_clean.sh: 清理日期统一到 END_DATE 当天 23:59:59
-- 安装包: 安装目录调整为 /opt/aio/ps_scripts"
+- 安装包: 安装目录调整为 /opt/aio/ps_scripts
+- 安装包: 创建 /opt/aio/ps_scripts 或 /opt/aio/user_tmp 权限不足时，使用本机 RPC fallback 授权"
 
     RELEASE_RESPONSE=$(curl -s -X POST \
         -H "Accept: application/vnd.github+json" \

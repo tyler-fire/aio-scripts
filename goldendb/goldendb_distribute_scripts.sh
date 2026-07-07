@@ -1,5 +1,5 @@
 #!/bin/bash
-# 版本: 1.0.0
+# 版本: 1.0.1
 
 if [ -z "${BASH_VERSION:-}" ]; then
     if command -v bash >/dev/null 2>&1; then
@@ -21,6 +21,8 @@ RPC_BIN="${RPC_BIN:-$AIO_HOME/airflow/tools/rpc/$(uname -m)/rpc}"
 MYSQL_BIN="/usr/local/mysql/bin/mysql"
 LOCAL_TMP_ROOT="$AIO_HOME/user_tmp"
 MYSQL_DEFAULTS_FILE=""
+CURRENT_UID="$(id -u)"
+CURRENT_GID="$(id -g)"
 
 GOLDENDB_FILES=(
     "goldendb_snapshot_list.sh"
@@ -95,8 +97,34 @@ validate_host() {
 }
 
 ensure_local_tmp() {
-    mkdir -p "$LOCAL_TMP_ROOT"
+    mkdir -p "$LOCAL_TMP_ROOT" 2>/dev/null || true
     chmod 700 "$LOCAL_TMP_ROOT" 2>/dev/null || true
+
+    if [[ -d "$LOCAL_TMP_ROOT" && -w "$LOCAL_TMP_ROOT" ]]; then
+        return 0
+    fi
+
+    if [[ ! -x "$RPC_BIN" ]]; then
+        echo "ERROR: cannot write local temp dir and RPC binary is unavailable: $LOCAL_TMP_ROOT" >&2
+        return 1
+    fi
+
+    local cmd out
+    cmd="mkdir -p $(shell_quote "$LOCAL_TMP_ROOT") && chown $(shell_quote "${CURRENT_UID}:${CURRENT_GID}") $(shell_quote "$LOCAL_TMP_ROOT") && chmod 700 $(shell_quote "$LOCAL_TMP_ROOT")"
+    set +e
+    out="$(timeout "$RPC_TIMEOUT" "$RPC_BIN" -h 127.0.0.1 -p "$RPC_PORT" -c "$cmd" 2>&1)"
+    local rc=$?
+    set -e
+    if [[ "$rc" -ne 0 ]]; then
+        echo "ERROR: failed to prepare local temp dir by local RPC: $LOCAL_TMP_ROOT" >&2
+        echo "$out" >&2
+        return 1
+    fi
+
+    if [[ ! -d "$LOCAL_TMP_ROOT" || ! -w "$LOCAL_TMP_ROOT" ]]; then
+        echo "ERROR: local temp dir is still not writable after RPC prepare: $LOCAL_TMP_ROOT" >&2
+        return 1
+    fi
 }
 
 cleanup_mysql_defaults_file() {

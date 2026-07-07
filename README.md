@@ -14,7 +14,7 @@ bash aio-scripts.install
 也可以使用 Release 包：
 
 ```bash
-wget https://github.com/tyler-fire/aio-scripts/releases/download/v2.1.3/aio-scripts.install
+wget https://github.com/tyler-fire/aio-scripts/releases/download/v2.1.4/aio-scripts.install
 bash aio-scripts.install
 ```
 
@@ -69,10 +69,16 @@ bash goldendb_log_clean.sh -e 2026-07-07
 
 ## 版本信息
 
-- 当前版本: **2.1.3**
+- 当前版本: **2.1.4**
 - 发布日期: 2026-07-07
 
 ## 更新日志
+
+### v2.1.4 (2026-07-07)
+
+- 安装包会自动准备 `/opt/aio/ps_scripts` 和 `/opt/aio/user_tmp`。
+- 当前用户权限不足时，安装包会尝试通过本机 RPC 创建目录并授权给当前用户。
+- GoldenDB 脚本分发在创建 `/opt/aio/user_tmp` 失败时，也会尝试通过本机 RPC 修正权限。
 
 ### v2.1.3 (2026-07-07)
 
