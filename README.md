@@ -14,7 +14,7 @@ bash aio-scripts.install
 也可以使用 Release 包：
 
 ```bash
-wget https://github.com/tyler-fire/aio-scripts/releases/download/v2.1.5/aio-scripts.install
+wget https://github.com/tyler-fire/aio-scripts/releases/download/v2.1.6/aio-scripts.install
 bash aio-scripts.install
 ```
 
@@ -69,10 +69,16 @@ bash goldendb_log_clean.sh -e 2026-07-07
 
 ## 版本信息
 
-- 当前版本: **2.1.5**
+- 当前版本: **2.1.6**
 - 发布日期: 2026-07-07
 
 ## 更新日志
+
+### v2.1.6 (2026-07-07)
+
+- RPC 工具路径增加平台映射，兼容 `x86_64/amd64` 和 `aarch64/arm64`。
+- GoldenDB 清理脚本在 ARM Worker 上会优先使用 `/opt/aio/airflow/tools/rpc/aarch64/rpc`，必要时 fallback 到 `arm64/rpc`。
+- GoldenDB 分发脚本和安装包本机 RPC fallback 同步支持 ARM 平台。
 
 ### v2.1.5 (2026-07-07)
 
