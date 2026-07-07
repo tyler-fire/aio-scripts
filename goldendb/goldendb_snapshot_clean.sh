@@ -221,12 +221,12 @@ echo "Delete:  $delete_count"
 echo "Skipped snapshots with clones: $skip_count"
 echo "Skipped snapshots with errors: $error_count"
 bold "Pool $POOL_NAME: $(get_pool_usage)"
-highlight "Estimated reclaim by DELETE: $reclaim_human"
+highlight "Estimated reclaim by WILL_DELETE: $reclaim_human"
 echo
 
 if (( delete_count > 0 )); then
-    printf "%-8s %-70s %-10s %-10s %s\n" "ACTION" "SNAPSHOT" "USED" "REFER" "TIME"
-    awk -F '\t' '$1 == "DELETE" {printf "%-8s %-70s %-10s %-10s #%s\n", $1, $2, $3, $4, $5}' "$tmp_candidates"
+    printf "%-11s %-70s %-10s %-10s %s\n" "ACTION" "SNAPSHOT" "USED" "REFER" "TIME"
+    awk -F '\t' '$1 == "DELETE" {printf "%-11s %-70s %-10s %-10s #%s\n", "WILL_DELETE", $2, $3, $4, $5}' "$tmp_candidates"
 fi
 
 if (( skip_count > 0 )); then
@@ -252,7 +252,7 @@ if [[ "$EXECUTE" != true ]]; then
 fi
 
 echo
-echo "The snapshots listed under DELETE will be destroyed."
+echo "The snapshots listed under WILL_DELETE will be destroyed."
 read -r -p "Type YES to continue: " confirm
 if [[ "$confirm" != "YES" ]]; then
     echo "Cancelled"

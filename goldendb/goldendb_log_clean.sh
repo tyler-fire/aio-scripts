@@ -214,7 +214,7 @@ done
 echo
 echo "Total matched files: $total_files"
 bold "Pool $POOL_NAME: $(get_pool_usage)"
-highlight "Estimated reclaim by DELETE: $(format_bytes "$total_bytes")"
+highlight "Estimated reclaim by WILL_DELETE: $(format_bytes "$total_bytes")"
 
 if (( total_files == 0 )); then
     exit 0
