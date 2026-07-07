@@ -55,6 +55,15 @@ validate_date() {
     fi
 }
 
+is_future_date() {
+    local value="$1"
+    local today_epoch
+    local value_epoch
+    today_epoch=$(date -d "$(date '+%Y-%m-%d') 00:00:00" +%s)
+    value_epoch=$(date -d "$value 00:00:00" +%s)
+    (( value_epoch > today_epoch ))
+}
+
 human_to_bytes() {
     local value="$1"
     awk -v value="$value" '
@@ -151,6 +160,11 @@ if [[ -z "$END_DATE" ]]; then
 fi
 
 validate_date "$END_DATE"
+
+if is_future_date "$END_DATE"; then
+    echo "ERROR: future END_DATE is not allowed: $END_DATE" >&2
+    exit 1
+fi
 
 end_epoch=$(date -d "$END_DATE 23:59:59" +%s)
 
@@ -264,8 +278,9 @@ fi
 
 echo
 echo "The snapshots listed under WILL_DELETE will be destroyed."
-read -r -p "Type YES to continue: " confirm
-if [[ "$confirm" != "YES" ]]; then
+echo "This operation can make older backup points unrecoverable if END_DATE is wrong."
+read -r -p "Type END_DATE ${END_DATE} to continue: " confirm
+if [[ "$confirm" != "$END_DATE" ]]; then
     echo "Cancelled"
     exit 1
 fi

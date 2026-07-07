@@ -14,6 +14,7 @@ fi
 set -euo pipefail
 
 END_DATE=""
+END_CUTOFF=""
 PATTERN=""
 EXECUTE=false
 POOL_NAME="aiopool"
@@ -25,7 +26,7 @@ Usage:
 
 Options:
   -e  Delete log files up to this date, format: YYYY-MM-DD. Required.
-      The matched files have mtime earlier than or equal to END_DATE 00:00:00.
+      The matched files have mtime earlier than or equal to END_DATE 23:59:59.
   -p  Extra mountpoint pattern, such as 192.168.1.56 or 419.
       The script always processes GoldenDB log and gtmlog files together.
   -x  Execute deletion. Without -x, this script only previews candidates.
@@ -126,10 +127,10 @@ print_candidates() {
     local dir="$1"
 
     if [[ "$dir" == *_goldendb_log ]]; then
-        find "$dir" -xdev -path "$dir/binlog_*/*" -type f -name 'mysql-bin.*' ! -newermt "$END_DATE" -printf '%s\t%p\n'
+        find "$dir" -xdev -path "$dir/binlog_*/*" -type f -name 'mysql-bin.*' ! -newermt "$END_CUTOFF" -printf '%s\t%p\n'
     elif [[ "$dir" == *_goldendb_gtmlog ]]; then
         find "$dir" -xdev -path "$dir/active_trans/Active_TX_Archive/*" -type f \
-            -name 'DBCluster_*_Active_TX_info.*' ! -name '*.index' ! -newermt "$END_DATE" -printf '%s\t%p\n'
+            -name 'DBCluster_*_Active_TX_info.*' ! -name '*.index' ! -newermt "$END_CUTOFF" -printf '%s\t%p\n'
     fi
 }
 
@@ -156,6 +157,7 @@ if [[ -z "$END_DATE" ]]; then
 fi
 
 validate_date "$END_DATE"
+END_CUTOFF="$END_DATE 23:59:59"
 
 if is_future_date "$END_DATE"; then
     echo "ERROR: future END_DATE is not allowed: $END_DATE" >&2
@@ -185,7 +187,7 @@ fi
 
 echo
 echo "GoldenDB log cleanup"
-echo "Range:       <= $END_DATE 00:00:00"
+echo "Range:       <= $END_CUTOFF"
 echo "Pattern:     ${PATTERN:-<none>}"
 echo "Mode:        $([[ "$EXECUTE" == true ]] && echo execute || echo preview)"
 echo
@@ -196,7 +198,7 @@ for dir in "${dirs[@]}"; do
 done
 
 echo
-echo "Counting cleanup candidates up to $END_DATE 00:00:00..."
+echo "Counting cleanup candidates up to $END_CUTOFF..."
 echo "Scope:"
 echo "  *_goldendb_log:    binlog_* / mysql-bin.* only"
 echo "  *_goldendb_gtmlog: active_trans/Active_TX_Archive / DBCluster_*_Active_TX_info.* except *.index"

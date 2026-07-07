@@ -4,7 +4,7 @@
 
 set -e
 
-VERSION="2.1.1"
+VERSION="2.1.3"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUTPUT_FILE="$SCRIPT_DIR/aio-scripts.install"
 OUTPUT_TMP="$OUTPUT_FILE.tmp.$$"
@@ -39,7 +39,9 @@ CORE_TOOLS=(
     "aio-fsdeamon-cleanup.sh"
     "aio-unlock-tasks.py"
     "aio-collect-v.sh"
+    "aio-collect-hang-logs.sh"
     "check_aiopool_usage.py"
+    "goldendb"
     "license.sh"
     "ops"
     "ops_arm"
@@ -50,6 +52,9 @@ for tool in "${CORE_TOOLS[@]}"; do
     if [ -f "$SCRIPT_DIR/$tool" ]; then
         cp -f "$SCRIPT_DIR/$tool" "$TEMP_DIR/"
         echo "  ✓ $tool"
+    elif [ -d "$SCRIPT_DIR/$tool" ]; then
+        cp -a "$SCRIPT_DIR/$tool" "$TEMP_DIR/"
+        echo "  ✓ $tool/"
     else
         echo "  ✗ $tool (文件不存在，跳过)"
     fi
@@ -66,11 +71,11 @@ echo "▸ 生成自解压安装脚本..."
 cat > "$OUTPUT_TMP" << 'EOF'
 #!/bin/bash
 # AIO 运维工具集安装脚本（自解压）
-# 版本: 2.1.1
+# 版本: 2.1.3
 
 set -e
 
-INSTALL_DIR="/opt/aio/scripts"
+INSTALL_DIR="/opt/aio/ps_scripts"
 TEMP_DIR="/tmp/aio-scripts-install-$$"
 
 echo "========================================"
@@ -110,7 +115,9 @@ CORE_TOOLS=(
     "aio-fsdeamon-cleanup.sh"
     "aio-unlock-tasks.py"
     "aio-collect-v.sh"
+    "aio-collect-hang-logs.sh"
     "check_aiopool_usage.py"
+    "goldendb"
     "license.sh"
     "ops"
     "ops_arm"
@@ -122,6 +129,11 @@ for tool in "${CORE_TOOLS[@]}"; do
         cp -f "$tool" "$INSTALL_DIR/"
         chmod +x "$INSTALL_DIR/$tool"
         echo "  ✓ $tool"
+    elif [ -d "$tool" ]; then
+        rm -rf "$INSTALL_DIR/$tool"
+        cp -a "$tool" "$INSTALL_DIR/"
+        find "$INSTALL_DIR/$tool" -type f -name '*.sh' -exec chmod +x {} \;
+        echo "  ✓ $tool/"
     else
         echo "  ✗ $tool (文件不存在)"
     fi
@@ -146,7 +158,7 @@ echo "▸ 验证安装..."
 cd "$INSTALL_DIR"
 MISSING=0
 for tool in "${CORE_TOOLS[@]}"; do
-    if [ ! -f "$tool" ]; then
+    if [ ! -e "$tool" ]; then
         echo "  ✗ $tool 安装失败"
         MISSING=$((MISSING + 1))
     fi
@@ -234,16 +246,20 @@ if [[ "$publish" =~ ^[Yy]$ ]]; then
     echo "  创建新 Release v${VERSION}..."
 RELEASE_BODY="## 本次更新
 
-- **aio-diagnose.py 服务日志收集修复** - 按真实目录 \`/opt/aio/logs/service/*/*.log\` 和 \`.log.gz\` 轮转日志扫描，不再只找平铺的 \`cdm.log\`、\`worker.log\`。
-- **aio-diagnose.py 时间窗口过滤修复** - 服务日志会按任务开始/结束时间前后 5 分钟提取，避免把无关时间段日志打进诊断包。
-- **check_aiopool_usage.py 超时容错** - Worker 快照明细命令超时时只提示错误，保留池总览和汇总表，不再中断整次检查。
-- **ops 使用说明修正** - 自定义 \`--key\` 明确要求 16、24 或 32 字节，示例改为可直接使用的 16 字节密钥。
+- **安装目录调整** - 安装目标改为 \`/opt/aio/ps_scripts\`，不再依赖 \`/opt/aio/scripts\`。
+- **GoldenDB 脚本分发** - \`aio-tools.sh\` 新增 \`GoldenDB脚本分发\`，通过 RPC 将 3 个本地清理脚本复制到 Worker 的 \`/opt/aio/ps_scripts/goldendb/\`。
+- **分发安全边界** - GoldenDB 分发只上传脚本并校验 \`sha256sum\`，不远程执行快照或日志清理。
+- **GoldenDB 清理脚本修正** - snapshot 清理拒绝未来日期，执行确认改为输入 \`END_DATE\`；log 清理日期语义统一为 \`<= END_DATE 23:59:59\`。
+- **日志分析平台入口更新** - 统一使用 \`/opt/aio/ps_scripts/aio-tools.sh\` 作为运维/日志分析工具入口。
 
 ## 📦 安装方式
 
 \`\`\`bash
 wget https://github.com/$GITHUB_REPO/releases/download/v${VERSION}/aio-scripts.install
 bash aio-scripts.install
+
+# 安装后入口
+bash /opt/aio/ps_scripts/aio-tools.sh
 \`\`\`
 
 ## 包含工具
@@ -254,16 +270,19 @@ bash aio-scripts.install
 - aio-collect-logs.py - 日志收集（新增子任务过滤）
 - aio-unlock-tasks.py - 任务解锁
 - aio-fsdeamon-cleanup.sh - fsdeamon 清理
+- aio-collect-hang-logs.sh - 主机异常日志收集
 - check_aiopool_usage.py - aiopool 空间检查
 - aio-collect-v.sh - 版本信息收集
+- goldendb/ - GoldenDB 本地清理脚本与分发工具
 - ops - 文件加解密工具
 
 ## 📝 更新日志
 
-- aio-diagnose.py 1.0.1: 修复服务日志路径和时间窗口过滤
-- check_aiopool_usage.py 1.1.1: 修复 RPC 超时崩溃
-- aio-tools.sh 1.2.1: 补充 ops 自定义密钥长度说明
-- 此前: aio-collect-logs.py 新增 --failed-only / --subtask 子任务过滤"
+- aio-tools.sh 1.2.3: 新增 GoldenDB 脚本分发入口
+- goldendb_distribute_scripts.sh 1.0.0: 分发 3 个 GoldenDB 本地脚本到 Worker
+- goldendb_snapshot_clean.sh: 增加未来日期保护，执行确认改为输入 END_DATE
+- goldendb_log_clean.sh: 清理日期统一到 END_DATE 当天 23:59:59
+- 安装包: 安装目录调整为 /opt/aio/ps_scripts"
 
     RELEASE_RESPONSE=$(curl -s -X POST \
         -H "Accept: application/vnd.github+json" \
