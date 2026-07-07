@@ -14,7 +14,7 @@ bash aio-scripts.install
 也可以使用 Release 包：
 
 ```bash
-wget https://github.com/tyler-fire/aio-scripts/releases/download/v2.1.4/aio-scripts.install
+wget https://github.com/tyler-fire/aio-scripts/releases/download/v2.1.5/aio-scripts.install
 bash aio-scripts.install
 ```
 
@@ -69,10 +69,16 @@ bash goldendb_log_clean.sh -e 2026-07-07
 
 ## 版本信息
 
-- 当前版本: **2.1.4**
+- 当前版本: **2.1.5**
 - 发布日期: 2026-07-07
 
 ## 更新日志
+
+### v2.1.5 (2026-07-07)
+
+- GoldenDB 快照清理支持普通用户执行：确认后通过本机 RPC 以 root 身份执行 `zfs destroy`。
+- GoldenDB 日志清理支持普通用户执行：确认后通过本机 RPC 以 root 身份删除匹配文件。
+- 预览、候选列表、clone 跳过、日期二次确认逻辑不变。
 
 ### v2.1.4 (2026-07-07)
 

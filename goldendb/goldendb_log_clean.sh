@@ -18,6 +18,11 @@ END_CUTOFF=""
 PATTERN=""
 EXECUTE=false
 POOL_NAME="aiopool"
+AIO_HOME="${AIO_HOME:-/opt/aio}"
+RPC_PORT="${RPC_PORT:-6611}"
+RPC_TIMEOUT="${RPC_TIMEOUT:-30}"
+RPC_ACTION_TIMEOUT="${RPC_ACTION_TIMEOUT:-600}"
+RPC_BIN="${RPC_BIN:-$AIO_HOME/airflow/tools/rpc/$(uname -m)/rpc}"
 
 usage() {
     cat <<'EOF'
@@ -92,6 +97,40 @@ bold() {
         printf '\033[1m%s\033[0m\n' "$text"
     else
         printf '%s\n' "$text"
+    fi
+}
+
+shell_quote() {
+    printf "'%s'" "$(printf "%s" "$1" | sed "s/'/'\\\\''/g")"
+}
+
+local_rpc_cmd() {
+    local cmd="$1"
+    timeout "$RPC_ACTION_TIMEOUT" "$RPC_BIN" -h 127.0.0.1 -p "$RPC_PORT" -c "$cmd"
+}
+
+need_rpc_for_delete() {
+    [[ "$(id -u)" -ne 0 ]]
+}
+
+verify_local_rpc() {
+    if [[ ! -x "$RPC_BIN" ]]; then
+        echo "ERROR: current user is not root and RPC binary is unavailable: $RPC_BIN" >&2
+        return 1
+    fi
+    if ! timeout "$RPC_TIMEOUT" "$RPC_BIN" -h 127.0.0.1 -p "$RPC_PORT" -c "echo aio-local-rpc-ok" 2>/dev/null | grep -q "aio-local-rpc-ok"; then
+        echo "ERROR: current user is not root and local RPC is not reachable on 127.0.0.1:$RPC_PORT" >&2
+        return 1
+    fi
+}
+
+delete_file() {
+    local file_path="$1"
+
+    if need_rpc_for_delete; then
+        local_rpc_cmd "rm -- $(shell_quote "$file_path")"
+    else
+        rm -- "$file_path"
     fi
 }
 
@@ -190,6 +229,9 @@ echo "GoldenDB log cleanup"
 echo "Range:       <= $END_CUTOFF"
 echo "Pattern:     ${PATTERN:-<none>}"
 echo "Mode:        $([[ "$EXECUTE" == true ]] && echo execute || echo preview)"
+if [[ "$EXECUTE" == true ]] && need_rpc_for_delete; then
+    echo "Runner:      local RPC root (current user: $(id -un 2>/dev/null || id -u))"
+fi
 echo
 
 echo "Matched mountpoints:"
@@ -248,13 +290,17 @@ if [[ "$confirm" != "$END_DATE" ]]; then
     exit 1
 fi
 
+if need_rpc_for_delete; then
+    verify_local_rpc
+fi
+
 deleted_count=0
 for dir in "${dirs[@]}"; do
     echo "Cleaning: $dir"
     deleted_in_dir=0
     while IFS=$'\t' read -r candidate_dir file_path _file_size; do
         [[ "$candidate_dir" == "$dir" ]] || continue
-        if rm -- "$file_path"; then
+        if delete_file "$file_path"; then
             deleted_in_dir=$((deleted_in_dir + 1))
         else
             echo "ERROR: failed to delete $file_path" >&2

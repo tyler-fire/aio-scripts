@@ -18,6 +18,11 @@ PATTERN=""
 EXECUTE=false
 RECURSIVE=false
 POOL_NAME="aiopool"
+AIO_HOME="${AIO_HOME:-/opt/aio}"
+RPC_PORT="${RPC_PORT:-6611}"
+RPC_TIMEOUT="${RPC_TIMEOUT:-30}"
+RPC_ACTION_TIMEOUT="${RPC_ACTION_TIMEOUT:-600}"
+RPC_BIN="${RPC_BIN:-$AIO_HOME/airflow/tools/rpc/$(uname -m)/rpc}"
 
 usage() {
     cat <<'EOF'
@@ -115,6 +120,50 @@ bold() {
         printf '\033[1m%s\033[0m\n' "$text"
     else
         printf '%s\n' "$text"
+    fi
+}
+
+shell_quote() {
+    printf "'%s'" "$(printf "%s" "$1" | sed "s/'/'\\\\''/g")"
+}
+
+local_rpc_cmd() {
+    local cmd="$1"
+    timeout "$RPC_ACTION_TIMEOUT" "$RPC_BIN" -h 127.0.0.1 -p "$RPC_PORT" -c "$cmd"
+}
+
+need_rpc_for_destroy() {
+    [[ "$(id -u)" -ne 0 ]]
+}
+
+verify_local_rpc() {
+    if [[ ! -x "$RPC_BIN" ]]; then
+        echo "ERROR: current user is not root and RPC binary is unavailable: $RPC_BIN" >&2
+        return 1
+    fi
+    if ! timeout "$RPC_TIMEOUT" "$RPC_BIN" -h 127.0.0.1 -p "$RPC_PORT" -c "echo aio-local-rpc-ok" 2>/dev/null | grep -q "aio-local-rpc-ok"; then
+        echo "ERROR: current user is not root and local RPC is not reachable on 127.0.0.1:$RPC_PORT" >&2
+        return 1
+    fi
+}
+
+destroy_snapshot() {
+    local snapshot_name="$1"
+    local cmd
+
+    if need_rpc_for_destroy; then
+        if [[ "$RECURSIVE" == true ]]; then
+            cmd="zfs destroy -R $(shell_quote "$snapshot_name")"
+        else
+            cmd="zfs destroy $(shell_quote "$snapshot_name")"
+        fi
+        local_rpc_cmd "$cmd"
+    else
+        if [[ "$RECURSIVE" == true ]]; then
+            zfs destroy -R "$snapshot_name"
+        else
+            zfs destroy "$snapshot_name"
+        fi
     fi
 }
 
@@ -242,6 +291,9 @@ echo "Scope:   data, log, and gtmlog ZFS snapshots"
 echo "Pattern: ${PATTERN:-<none>}"
 echo "Range:   <= $END_DATE 23:59:59"
 echo "Mode:    $([[ "$EXECUTE" == true ]] && echo execute || echo preview)"
+if [[ "$EXECUTE" == true ]] && need_rpc_for_destroy; then
+    echo "Runner:  local RPC root (current user: $(id -un 2>/dev/null || id -u))"
+fi
 echo "Delete:  $delete_count"
 echo "Skipped snapshots with clones: $skip_count"
 echo "Skipped snapshots with errors: $error_count"
@@ -293,15 +345,15 @@ if [[ "$RECURSIVE" == true ]]; then
     fi
 fi
 
+if need_rpc_for_destroy; then
+    verify_local_rpc
+fi
+
 echo "Start destroying snapshots..."
 destroyed_count=0
 while IFS=$'\t' read -r action snapshot_name _used _refer datetime _clones _used_bytes; do
     [[ "$action" == "DELETE" ]] || continue
-    if [[ "$RECURSIVE" == true ]]; then
-        zfs destroy -R "$snapshot_name"
-    else
-        zfs destroy "$snapshot_name"
-    fi
+    destroy_snapshot "$snapshot_name"
     destroyed_count=$((destroyed_count + 1))
     echo "DESTROYED $snapshot_name #$datetime"
 done < "$tmp_candidates"
