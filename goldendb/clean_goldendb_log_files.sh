@@ -14,7 +14,7 @@ Usage:
 
 Options:
   -b  Delete files older than this date, format: YYYY-MM-DD. Required.
-      The matched files are strictly earlier than BEFORE_DATE 00:00:00.
+      The matched files have mtime earlier than or equal to BEFORE_DATE 00:00:00.
   -k  Log kind: all, log, gtmlog. Default: all.
       all    matches *_goldendb_log and *_goldendb_gtmlog
       log    matches *_goldendb_log
@@ -44,24 +44,56 @@ validate_date() {
     fi
 }
 
+is_future_date() {
+    local value="$1"
+    local today_epoch
+    local value_epoch
+    today_epoch=$(date -d "$(date '+%Y-%m-%d') 00:00:00" +%s)
+    value_epoch=$(date -d "$value 00:00:00" +%s)
+    (( value_epoch > today_epoch ))
+}
+
+is_goldendb_log_mountpoint() {
+    local mountpoint="$1"
+    local base
+    local regex='^([0-9]{1,3}\.){3}[0-9]{1,3}_[0-9]+_goldendb_(log|gtmlog)$'
+
+    [[ "$mountpoint" == /volmountpoint/aiopool/* ]] || return 1
+    base=$(basename "$mountpoint")
+    [[ "$base" =~ $regex ]]
+}
+
 match_mountpoint() {
     local mountpoint="$1"
 
+    is_goldendb_log_mountpoint "$mountpoint" || return 1
+
     case "$KIND" in
         all)
-            [[ "$mountpoint" == /volmountpoint/*_goldendb_log || "$mountpoint" == /volmountpoint/*_goldendb_gtmlog ]]
+            [[ "$mountpoint" == /volmountpoint/aiopool/*_goldendb_log || "$mountpoint" == /volmountpoint/aiopool/*_goldendb_gtmlog ]]
             ;;
         log)
-            [[ "$mountpoint" == /volmountpoint/*_goldendb_log ]]
+            [[ "$mountpoint" == /volmountpoint/aiopool/*_goldendb_log ]]
             ;;
         gtmlog)
-            [[ "$mountpoint" == /volmountpoint/*_goldendb_gtmlog ]]
+            [[ "$mountpoint" == /volmountpoint/aiopool/*_goldendb_gtmlog ]]
             ;;
         *)
             echo "ERROR: invalid kind '$KIND', expected all, log, or gtmlog" >&2
             exit 1
             ;;
     esac
+}
+
+print_candidates() {
+    local dir="$1"
+
+    if [[ "$dir" == *_goldendb_log ]]; then
+        find "$dir" -xdev -path "$dir/binlog_*/*" -type f -name 'mysql-bin.*' ! -newermt "$BEFORE_DATE" -print
+    elif [[ "$dir" == *_goldendb_gtmlog ]]; then
+        find "$dir" -xdev -path "$dir/active_trans/Active_TX_Archive/*" -type f \
+            -name 'DBCluster_*_Active_TX_info.*' ! -name '*.index' ! -newermt "$BEFORE_DATE" -print
+    fi
 }
 
 while getopts "b:k:p:xh" opt; do
@@ -89,8 +121,26 @@ fi
 
 validate_date "$BEFORE_DATE"
 
+case "$KIND" in
+    all|log|gtmlog) ;;
+    *)
+        echo "ERROR: invalid kind '$KIND', expected all, log, or gtmlog" >&2
+        exit 1
+        ;;
+esac
+
+if is_future_date "$BEFORE_DATE"; then
+    echo "ERROR: future BEFORE_DATE is not allowed: $BEFORE_DATE" >&2
+    exit 1
+fi
+
+if ! df_rows=$(df -P); then
+    echo "ERROR: failed to list mounted filesystems" >&2
+    exit 1
+fi
+
 mapfile -t dirs < <(
-    df -P | awk '$6 ~ /^\/volmountpoint\// {print $6}' | while IFS= read -r mountpoint; do
+    awk '$6 ~ /^\/volmountpoint\// {print $6}' <<< "$df_rows" | while IFS= read -r mountpoint; do
         if match_mountpoint "$mountpoint"; then
             if [[ -z "$PATTERN" || "$mountpoint" == *"$PATTERN"* ]]; then
                 printf '%s\n' "$mountpoint"
@@ -120,11 +170,23 @@ for dir in "${dirs[@]}"; do
 done
 
 echo
-echo "Counting files older than $BEFORE_DATE..."
+echo "Counting cleanup candidates older than $BEFORE_DATE..."
+echo "Scope:"
+echo "  *_goldendb_log:    binlog_* / mysql-bin.* only"
+echo "  *_goldendb_gtmlog: active_trans/Active_TX_Archive / DBCluster_*_Active_TX_info.* except *.index"
+echo
+
+tmp_candidates=$(mktemp "/tmp/goldendb_log_cleanup.XXXXXX")
+trap 'rm -f "$tmp_candidates"' EXIT
 
 total_files=0
 for dir in "${dirs[@]}"; do
-    file_count=$(find "$dir" -xdev -type f ! -newermt "$BEFORE_DATE" -printf '.' 2>/dev/null | wc -c)
+    before_count=$(wc -l < "$tmp_candidates")
+    while IFS= read -r file_path; do
+        printf "%s\t%s\n" "$dir" "$file_path" >> "$tmp_candidates"
+    done < <(print_candidates "$dir")
+    after_count=$(wc -l < "$tmp_candidates")
+    file_count=$((after_count - before_count))
     total_files=$((total_files + file_count))
     printf "%-80s %10s files\n" "$dir" "$file_count"
 done
@@ -153,7 +215,16 @@ fi
 deleted_count=0
 for dir in "${dirs[@]}"; do
     echo "Cleaning: $dir"
-    deleted_in_dir=$(find "$dir" -xdev -type f ! -newermt "$BEFORE_DATE" -print -delete 2>/dev/null | wc -l)
+    deleted_in_dir=0
+    while IFS=$'\t' read -r candidate_dir file_path; do
+        [[ "$candidate_dir" == "$dir" ]] || continue
+        if rm -- "$file_path"; then
+            deleted_in_dir=$((deleted_in_dir + 1))
+        else
+            echo "ERROR: failed to delete $file_path" >&2
+            exit 1
+        fi
+    done < "$tmp_candidates"
     deleted_count=$((deleted_count + deleted_in_dir))
     printf "%-80s %10s deleted\n" "$dir" "$deleted_in_dir"
 done

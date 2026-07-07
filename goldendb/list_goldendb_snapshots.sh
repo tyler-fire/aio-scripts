@@ -33,7 +33,18 @@ fi
 
 printf "%-70s %-10s %-10s %s\n" "SNAPSHOT" "USED" "REFER" "TIME"
 
-zfs list -H -t snapshot -o name,used,refer 2>/dev/null | while IFS=$'\t' read -r snapshot_name used refer; do
+if ! snapshot_rows=$(zfs list -H -t snapshot -o name,used,refer); then
+    echo "ERROR: failed to list ZFS snapshots" >&2
+    exit 1
+fi
+
+matched_count=0
+tmp_rows=$(mktemp "/tmp/goldendb_snapshot_list.XXXXXX")
+trap 'rm -f "$tmp_rows"' EXIT
+
+while IFS=$'\t' read -r snapshot_name used refer; do
+    [[ -n "$snapshot_name" ]] || continue
+
     if [[ "$show_all" != true && "$snapshot_name" != *"$pattern"* ]]; then
         continue
     fi
@@ -56,5 +67,16 @@ zfs list -H -t snapshot -o name,used,refer 2>/dev/null | while IFS=$'\t' read -r
         datetime="-"
     fi
 
-    printf "%-70s %-10s %-10s #%s\n" "$snapshot_name" "$used" "$refer" "$datetime"
-done
+    sort_key="${sec_ts:-9999999999}"
+    printf "%s\t%s\t%s\t%s\t%s\n" "$sort_key" "$snapshot_name" "$used" "$refer" "$datetime" >> "$tmp_rows"
+    matched_count=$((matched_count + 1))
+done <<< "$snapshot_rows"
+
+if (( matched_count == 0 )); then
+    echo "No matching snapshots found. Pattern: $pattern"
+else
+    sort -n -k1,1 -k2,2 "$tmp_rows" | while IFS=$'\t' read -r _ snapshot_name used refer datetime; do
+        printf "%-70s %-10s %-10s #%s\n" "$snapshot_name" "$used" "$refer" "$datetime"
+    done
+    echo "Matched snapshots: $matched_count"
+fi
