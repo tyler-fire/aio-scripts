@@ -140,6 +140,16 @@ delete_file() {
     fi
 }
 
+trim_mountpoint() {
+    local mountpoint="$1"
+
+    if need_rpc_for_delete; then
+        local_rpc_cmd "command -v fstrim >/dev/null 2>&1 && fstrim -v $(shell_quote "$mountpoint")"
+    else
+        command -v fstrim >/dev/null 2>&1 && fstrim -v "$mountpoint"
+    fi
+}
+
 get_pool_usage() {
     if ! command -v zpool >/dev/null 2>&1; then
         echo "unavailable: zpool command not found"
@@ -290,6 +300,7 @@ fi
 echo
 echo "This will delete $total_files files under the matched GoldenDB log mountpoints."
 echo "This operation can make older backup points unrecoverable if END_DATE is wrong."
+echo "After deleting files, fstrim will run on mountpoints that actually had files deleted."
 read -r -p "Type END_DATE ${END_DATE} to continue: " confirm
 if [[ "$confirm" != "$END_DATE" ]]; then
     echo "Cancelled"
@@ -301,6 +312,7 @@ if need_rpc_for_delete; then
 fi
 
 deleted_count=0
+trimmed_count=0
 for dir in "${dirs[@]}"; do
     echo "Cleaning: $dir"
     deleted_in_dir=0
@@ -315,7 +327,18 @@ for dir in "${dirs[@]}"; do
     done < "$tmp_candidates"
     deleted_count=$((deleted_count + deleted_in_dir))
     printf "%-80s %10s deleted\n" "$dir" "$deleted_in_dir"
+
+    if (( deleted_in_dir > 0 )); then
+        echo "Trimming: $dir"
+        if trim_output=$(trim_mountpoint "$dir" 2>&1); then
+            trimmed_count=$((trimmed_count + 1))
+            echo "$trim_output"
+        else
+            echo "WARN: fstrim failed on $dir: $trim_output" >&2
+        fi
+    fi
 done
 
 echo
 echo "Cleanup completed. Deleted files: $deleted_count"
+echo "Trimmed mountpoints: $trimmed_count"

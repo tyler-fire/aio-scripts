@@ -4,7 +4,7 @@
 
 set -e
 
-VERSION="2.1.7"
+VERSION="2.1.8"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUTPUT_FILE="$SCRIPT_DIR/aio-scripts.install"
 OUTPUT_TMP="$OUTPUT_FILE.tmp.$$"
@@ -71,7 +71,7 @@ echo "▸ 生成自解压安装脚本..."
 cat > "$OUTPUT_TMP" << 'EOF'
 #!/bin/bash
 # AIO 运维工具集安装脚本（自解压）
-# 版本: 2.1.7
+# 版本: 2.1.8
 
 set -e
 
@@ -306,6 +306,7 @@ RELEASE_BODY="## 本次更新
 - **GoldenDB 清理脚本修正** - snapshot 清理拒绝未来日期，执行确认改为输入 \`END_DATE\`；log 清理日期语义统一为 \`<= END_DATE 23:59:59\`。
 - **GoldenDB 普通用户执行** - snapshot/log 脚本在普通用户执行 \`-x\` 时，确认后通过本机 RPC 执行 root 删除动作，解决 \`zfs destroy\` 或文件删除权限不足。
 - **RPC 平台兼容** - RPC 路径优先使用 \`uname -m\` 原始值，找不到时再兼容 \`amd64 -> x86_64\` 和 \`arm64 -> aarch64\`。
+- **GoldenDB 日志清理自动 trim** - log/gtmlog 文件删除后，对本次实际清理过的挂载点执行 \`fstrim -v\`，让 zpool 尽快回收 zvol 空闲块。
 - **日志分析平台入口更新** - 统一使用 \`/opt/aio/ps_scripts/aio-tools.sh\` 作为运维/日志分析工具入口。
 
 ## 📦 安装方式
@@ -337,7 +338,7 @@ bash /opt/aio/ps_scripts/aio-tools.sh
 - aio-tools.sh 1.2.3: 新增 GoldenDB 脚本分发入口
 - goldendb_distribute_scripts.sh 1.0.1: 分发 3 个 GoldenDB 本地脚本到 Worker；本机临时目录权限不足时使用本机 RPC 修正
 - goldendb_snapshot_clean.sh: 增加未来日期保护，执行确认改为输入 END_DATE；普通用户执行删除时通过本机 RPC 执行 zfs destroy
-- goldendb_log_clean.sh: 清理日期统一到 END_DATE 当天 23:59:59；普通用户执行删除时通过本机 RPC 删除文件
+- goldendb_log_clean.sh: 清理日期统一到 END_DATE 当天 23:59:59；普通用户执行删除时通过本机 RPC 删除文件；删除后自动 fstrim 已清理挂载点
 - RPC 路径: 优先使用 uname -m 原始值，找不到时再做 amd64/arm64 fallback，避免改变已有 aarch64 ARM Worker 行为
 - 安装包: 安装目录调整为 /opt/aio/ps_scripts
 - 安装包: 创建 /opt/aio/ps_scripts 或 /opt/aio/user_tmp 权限不足时，使用本机 RPC fallback 授权"

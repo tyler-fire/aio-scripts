@@ -14,7 +14,7 @@ bash aio-scripts.install
 也可以使用 Release 包：
 
 ```bash
-wget https://github.com/tyler-fire/aio-scripts/releases/download/v2.1.7/aio-scripts.install
+wget https://github.com/tyler-fire/aio-scripts/releases/download/v2.1.8/aio-scripts.install
 bash aio-scripts.install
 ```
 
@@ -69,10 +69,16 @@ bash goldendb_log_clean.sh -e 2026-07-07
 
 ## 版本信息
 
-- 当前版本: **2.1.7**
+- 当前版本: **2.1.8**
 - 发布日期: 2026-07-07
 
 ## 更新日志
+
+### v2.1.8 (2026-07-07)
+
+- GoldenDB 日志清理脚本在 `-x` 删除文件后，会自动对本次实际清理过的 log/gtmlog 挂载点执行 `fstrim -v`。
+- 普通用户执行时，`fstrim` 同样通过本机 RPC 以 root 身份执行。
+- `fstrim` 失败只输出告警，不回滚已经完成的文件删除。
 
 ### v2.1.7 (2026-07-07)
 
