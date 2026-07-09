@@ -14,7 +14,7 @@ bash aio-scripts.install
 也可以使用 Release 包：
 
 ```bash
-wget https://github.com/tyler-fire/aio-scripts/releases/download/v2.1.8/aio-scripts.install
+wget https://github.com/tyler-fire/aio-scripts/releases/download/v2.1.12/aio-scripts.install
 bash aio-scripts.install
 ```
 
@@ -37,6 +37,7 @@ bash aio-scripts.install
 | **check_aiopool_usage.py** | aiopool 空间检查 |
 | **aio-collect-v.sh** | 版本信息收集 |
 | **aio-collect-hang-logs.sh** | 主机异常日志收集 |
+| **aio-file-push.sh** | 文件 RPC 推送到 Worker |
 | **goldendb/** | GoldenDB 快照/日志本地清理脚本，以及脚本分发工具 |
 | **ops / ops_arm** | 文件加解密工具 |
 
@@ -67,12 +68,41 @@ bash goldendb_log_clean.sh -e 2026-07-07
 
 删除操作需要显式加 `-x`，并输入日期确认。
 
+File 推送：
+
+```bash
+bash /opt/aio/ps_scripts/aio-tools.sh
+# 选择 9) File推送
+
+# 或直接执行，支持单文件和通配符
+bash /opt/aio/ps_scripts/aio-file-push.sh -f '/opt/aio/user_tmp/*.enc'
+bash /opt/aio/ps_scripts/aio-file-push.sh -f /opt/aio/user_tmp/patch.tar.gz -w 10.7.16.217
+```
+
 ## 版本信息
 
-- 当前版本: **2.1.8**
-- 发布日期: 2026-07-07
+- 当前版本: **2.1.12**
+- 发布日期: 2026-07-09
 
 ## 更新日志
+
+### v2.1.12 (2026-07-09)
+
+- `aio-patch-push.sh` 更名为 `aio-file-push.sh`，`aio-tools.sh` 菜单入口改为 `9) File推送`。
+
+### v2.1.11 (2026-07-09)
+
+- `aio-file-push.sh` 升级到 1.0.2，上传确认输入会处理 Backspace/DEL 控制字符，兼容 `yea` 退格后改成 `yes` 的输入场景。
+
+### v2.1.10 (2026-07-09)
+
+- `aio-file-push.sh` 升级到 1.0.1，上传确认输入会清理首尾空格和回车符，避免输入 `yes` 后被误判为取消。
+
+### v2.1.9 (2026-07-09)
+
+- 新增 `aio-file-push.sh`，支持单文件和 `*.enc` 等通配符，通过 RPC 推送到 Worker 的 `/opt/aio/ps_scripts/patchfiles/`。
+- 同名文件直接覆盖，上传后使用 `sha256sum` 校验本地和远端文件。
+- `aio-tools.sh` 菜单新增 `9) File推送`。
 
 ### v2.1.8 (2026-07-07)
 

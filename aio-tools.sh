@@ -1,5 +1,5 @@
 #!/bin/bash
-# 版本: 1.2.3
+# 版本: 1.2.5
 # AIO 运维工具集入口
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 RPC_PORT="${RPC_PORT:-6611}"
@@ -23,6 +23,7 @@ TOOLS=(
     "aio-collect-hang-logs.sh|主机异常日志"
     "check_aiopool_usage.py|存储检查"
     "goldendb/goldendb_distribute_scripts.sh|GoldenDB脚本分发"
+    "aio-file-push.sh|File推送"
     "license.sh|License管理"
     "ops|加解密工具(x86_64)"
     "ops_arm|加解密工具(ARM)"
@@ -70,9 +71,10 @@ show_menu() {
     echo "  6) 版本收集    - 收集本机和Worker的工具版本"
     echo "  7) 存储检查    - 检查Worker的aiopool磁盘空间"
     echo "  8) GoldenDB脚本分发 - 复制3个本地清理脚本到Worker"
-    echo "  9) 加解密工具  - 文件加密/解密(ops/ops_arm)"
-    echo " 10) License管理 - 检查/激活/恢复License"
-    echo " 11) 主机异常日志 - 按起止时间收集hang/断连/重启分析日志"
+    echo "  9) File推送    - 通过RPC推送文件到Worker"
+    echo " 10) 加解密工具  - 文件加密/解密(ops/ops_arm)"
+    echo " 11) License管理 - 检查/激活/恢复License"
+    echo " 12) 主机异常日志 - 按起止时间收集hang/断连/重启分析日志"
     echo "  0) 退出"
     echo "----------------------------------------"
     echo "  -v) 查看版本信息"
@@ -425,9 +427,10 @@ run_tool() {
         6) tool_collect_versions ;;
         7) tool_check_aiopool ;;
         8) bash "$SCRIPT_DIR/goldendb/goldendb_distribute_scripts.sh" ;;
-        9) tool_ops ;;
-        10) tool_license ;;
-        11) tool_collect_hang_logs ;;
+        9) bash "$SCRIPT_DIR/aio-file-push.sh" ;;
+        10) tool_ops ;;
+        11) tool_license ;;
+        12) tool_collect_hang_logs ;;
     esac
 }
 
@@ -439,7 +442,7 @@ fi
 
 while true; do
     show_menu
-    read -rp "请选择 [0-11]: " choice
+    read -rp "请选择 [0-12]: " choice
     case "$choice" in
         0) echo "退出."; exit 0 ;;
         -v|--version) show_versions ;;
@@ -451,9 +454,10 @@ while true; do
         6) run_tool "版本收集" 6 ;;
         7) run_tool "存储检查" 7 ;;
         8) run_tool "GoldenDB脚本分发" 8 ;;
-        9) run_tool "加解密工具" 9 ;;
-        10) run_tool "License管理" 10 ;;
-        11) run_tool "主机异常日志收集" 11 ;;
+        9) run_tool "File推送" 9 ;;
+        10) run_tool "加解密工具" 10 ;;
+        11) run_tool "License管理" 11 ;;
+        12) run_tool "主机异常日志收集" 12 ;;
         *) echo "[ERROR] 无效输入" ;;
     esac
 done

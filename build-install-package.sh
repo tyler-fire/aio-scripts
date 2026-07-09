@@ -4,7 +4,7 @@
 
 set -e
 
-VERSION="2.1.8"
+VERSION="2.1.12"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUTPUT_FILE="$SCRIPT_DIR/aio-scripts.install"
 OUTPUT_TMP="$OUTPUT_FILE.tmp.$$"
@@ -41,6 +41,7 @@ CORE_TOOLS=(
     "aio-collect-v.sh"
     "aio-collect-hang-logs.sh"
     "check_aiopool_usage.py"
+    "aio-file-push.sh"
     "goldendb"
     "license.sh"
     "ops"
@@ -71,7 +72,7 @@ echo "▸ 生成自解压安装脚本..."
 cat > "$OUTPUT_TMP" << 'EOF'
 #!/bin/bash
 # AIO 运维工具集安装脚本（自解压）
-# 版本: 2.1.8
+# 版本: 2.1.12
 
 set -e
 
@@ -170,6 +171,7 @@ CORE_TOOLS=(
     "aio-collect-v.sh"
     "aio-collect-hang-logs.sh"
     "check_aiopool_usage.py"
+    "aio-file-push.sh"
     "goldendb"
     "license.sh"
     "ops"
@@ -307,6 +309,10 @@ RELEASE_BODY="## 本次更新
 - **GoldenDB 普通用户执行** - snapshot/log 脚本在普通用户执行 \`-x\` 时，确认后通过本机 RPC 执行 root 删除动作，解决 \`zfs destroy\` 或文件删除权限不足。
 - **RPC 平台兼容** - RPC 路径优先使用 \`uname -m\` 原始值，找不到时再兼容 \`amd64 -> x86_64\` 和 \`arm64 -> aarch64\`。
 - **GoldenDB 日志清理自动 trim** - log/gtmlog 文件删除后，对本次实际清理过的挂载点执行 \`fstrim -v\`，让 zpool 尽快回收 zvol 空闲块。
+- **File 推送工具** - \`aio-tools.sh\` 新增 \`File推送\`，支持本机文件路径和通配符，通过 RPC 上传到 Worker 的 \`/opt/aio/ps_scripts/patchfiles/\`，同名覆盖并校验 \`sha256sum\`。
+- **File 推送命名调整** - \`aio-patch-push.sh\` 更名为 \`aio-file-push.sh\`，菜单入口统一显示为 \`File推送\`。
+- **File 推送确认修正** - 上传确认输入会清理首尾空格和回车符，避免输入 \`yes\` 后被误判为取消。
+- **File 推送退格兼容** - 上传确认输入会处理 Backspace/DEL 控制字符，兼容跳板机或终端把退格原样传给脚本的情况。
 - **日志分析平台入口更新** - 统一使用 \`/opt/aio/ps_scripts/aio-tools.sh\` 作为运维/日志分析工具入口。
 
 ## 📦 安装方式
@@ -328,6 +334,7 @@ bash /opt/aio/ps_scripts/aio-tools.sh
 - aio-unlock-tasks.py - 任务解锁
 - aio-fsdeamon-cleanup.sh - fsdeamon 清理
 - aio-collect-hang-logs.sh - 主机异常日志收集
+- aio-file-push.sh - 文件 RPC 推送
 - check_aiopool_usage.py - aiopool 空间检查
 - aio-collect-v.sh - 版本信息收集
 - goldendb/ - GoldenDB 本地清理脚本与分发工具
@@ -335,6 +342,12 @@ bash /opt/aio/ps_scripts/aio-tools.sh
 
 ## 📝 更新日志
 
+- aio-tools.sh 1.2.5: File 推送入口命名调整
+- aio-tools.sh 1.2.4: 新增 File 推送入口
+- aio-file-push.sh: 由 aio-patch-push.sh 更名，菜单入口统一为 File推送
+- aio-file-push.sh 1.0.2: 上传确认输入兼容 Backspace/DEL 控制字符
+- aio-file-push.sh 1.0.1: 修正确认输入带空格或回车符时被误判取消的问题
+- aio-file-push.sh 1.0.0: 支持单文件和通配符，通过 RPC 上传到 Worker 的 /opt/aio/ps_scripts/patchfiles/，同名覆盖并校验 sha256sum
 - aio-tools.sh 1.2.3: 新增 GoldenDB 脚本分发入口
 - goldendb_distribute_scripts.sh 1.0.1: 分发 3 个 GoldenDB 本地脚本到 Worker；本机临时目录权限不足时使用本机 RPC 修正
 - goldendb_snapshot_clean.sh: 增加未来日期保护，执行确认改为输入 END_DATE；普通用户执行删除时通过本机 RPC 执行 zfs destroy
