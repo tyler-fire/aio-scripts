@@ -4,7 +4,7 @@
 
 set -e
 
-VERSION="2.1.12"
+VERSION="2.1.13"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUTPUT_FILE="$SCRIPT_DIR/aio-scripts.install"
 OUTPUT_TMP="$OUTPUT_FILE.tmp.$$"
@@ -72,7 +72,7 @@ echo "▸ 生成自解压安装脚本..."
 cat > "$OUTPUT_TMP" << 'EOF'
 #!/bin/bash
 # AIO 运维工具集安装脚本（自解压）
-# 版本: 2.1.12
+# 版本: __PACKAGE_VERSION__
 
 set -e
 
@@ -243,6 +243,8 @@ fi
 __ARCHIVE_BELOW__
 EOF
 
+sed -i "s/__PACKAGE_VERSION__/$VERSION/g" "$OUTPUT_TMP"
+
 # 追加压缩包数据
 cat tools.tar.gz >> "$OUTPUT_TMP"
 chmod +x "$OUTPUT_TMP"
@@ -301,6 +303,9 @@ if [[ "$publish" =~ ^[Yy]$ ]]; then
     echo "  创建新 Release v${VERSION}..."
 RELEASE_BODY="## 本次更新
 
+- **aio-diagnose.py 结束时间修复** - 已结束任务的 \`end_time\` 为空时使用 \`update_time\`，不再错误收集到当前时间的全部服务日志。
+- **aio-diagnose.py 路径修复** - 日志收集器固定从当前 \`/opt/aio/ps_scripts\` 目录调用，不再依赖旧目录。
+- **aio-diagnose.py 重跑修复** - 每次诊断前清理该任务未完成的临时目录，避免旧日志混入新诊断包。
 - **安装目录调整** - 安装目标改为 \`/opt/aio/ps_scripts\`，不再依赖 \`/opt/aio/scripts\`。
 - **安装权限修正** - 安装包会自动准备 \`/opt/aio/ps_scripts\` 和 \`/opt/aio/user_tmp\`；当前用户权限不足时，尝试通过本机 RPC 创建并授权。
 - **GoldenDB 脚本分发** - \`aio-tools.sh\` 新增 \`GoldenDB脚本分发\`，通过 RPC 将 3 个本地清理脚本复制到 Worker 的 \`/opt/aio/ps_scripts/goldendb/\`。
@@ -342,6 +347,7 @@ bash /opt/aio/ps_scripts/aio-tools.sh
 
 ## 📝 更新日志
 
+- aio-diagnose.py 1.0.2: 修复空 end_time、旧收集器路径和重跑残留问题
 - aio-tools.sh 1.2.5: File 推送入口命名调整
 - aio-tools.sh 1.2.4: 新增 File 推送入口
 - aio-file-push.sh: 由 aio-patch-push.sh 更名，菜单入口统一为 File推送

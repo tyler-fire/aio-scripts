@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
-# 版本: 1.0.1
+# 版本: 1.0.2
 """
 AIO 任务诊断工具
 
@@ -20,7 +20,7 @@ AIO 任务诊断工具
   /tmp/aio_diagnosis/task_<id>_diagnosis_<timestamp>.tar.gz
 """
 
-VERSION = "1.0.1"
+VERSION = "1.0.2"
 
 import os
 import sys
@@ -34,7 +34,13 @@ import tarfile
 import shutil
 
 AIO_HOME = "/opt/aio"
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_BASE = "/tmp/aio_diagnosis"
+
+ACTIVE_TASK_STATUSES = {
+    "running", "mounting", "deleting", "canceling", "pending",
+    "queued", "waiting", "created", "processing"
+}
 
 # 系统日志关键词
 SYSTEM_LOG_KEYWORDS = [
@@ -281,7 +287,7 @@ class TaskDiagnostic:
         """查询任务基本信息"""
         print("[1/6] 查询任务信息...")
         sql = """
-        SELECT id, task_num, task_type, task_status, start_time, end_time,
+        SELECT id, task_num, task_type, task_status, start_time, end_time, update_time,
                JSON_UNQUOTE(JSON_EXTRACT(attribute, '$.db_type'))
         FROM aio_total_task WHERE id = {}
         """.format(self.task_id)
@@ -298,7 +304,8 @@ class TaskDiagnostic:
             "task_status": row[3],
             "start_time": row[4] if row[4] != "NULL" else None,
             "end_time": row[5] if row[5] != "NULL" else None,
-            "db_type": row[6] if len(row) > 6 and row[6] not in ("null", "NULL") else None,
+            "update_time": row[6] if row[6] != "NULL" else None,
+            "db_type": row[7] if len(row) > 7 and row[7] not in ("null", "NULL") else None,
         }
 
         print("  任务: {} (ID: {})".format(self.task_info['task_num'], self.task_id))
@@ -309,8 +316,21 @@ class TaskDiagnostic:
             start = datetime.datetime.strptime(self.task_info['start_time'], "%Y-%m-%d %H:%M:%S")
             if self.task_info['end_time']:
                 end = datetime.datetime.strptime(self.task_info['end_time'], "%Y-%m-%d %H:%M:%S")
-            else:
+                end_source = "end_time"
+            elif self.task_info['task_status'].lower() in ACTIVE_TASK_STATUSES:
                 end = datetime.datetime.now()
+                end_source = "当前时间（任务仍在运行）"
+            elif self.task_info['update_time']:
+                end = datetime.datetime.strptime(self.task_info['update_time'], "%Y-%m-%d %H:%M:%S")
+                end_source = "update_time（end_time 为空）"
+            else:
+                end = start
+                end_source = "start_time（end_time/update_time 均为空）"
+
+            if end < start:
+                end = start
+                end_source += "，已修正为 start_time"
+
             self.time_window = {
                 "start": start - datetime.timedelta(minutes=5),
                 "end": end + datetime.timedelta(minutes=5)
@@ -319,6 +339,7 @@ class TaskDiagnostic:
                 self.time_window['start'].strftime("%Y-%m-%d %H:%M:%S"),
                 self.time_window['end'].strftime("%Y-%m-%d %H:%M:%S")
             ))
+            print("  结束时间来源: {}".format(end_source))
 
     def collect_db_records(self):
         """收集数据库记录快照"""
@@ -350,17 +371,23 @@ class TaskDiagnostic:
     def collect_task_logs(self):
         """调用 aio-collect-logs.py 收集任务日志"""
         print("\n[3/6] 收集任务日志...")
-        collect_script = "{}/scripts/aio-collect-logs.py".format(AIO_HOME)
+        collect_script = os.path.join(SCRIPT_DIR, "aio-collect-logs.py")
         if not os.path.exists(collect_script):
             print("  ✗ aio-collect-logs.py 不存在，跳过")
             return
 
         try:
             result = subprocess.run(
-                ["python3", collect_script, str(self.task_id)],
+                [sys.executable, collect_script, str(self.task_id)],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=300
             )
             output = result.stdout.decode()
+            if result.returncode != 0:
+                error_output = result.stderr.decode('utf-8', errors='ignore').strip()
+                print("  ✗ 日志收集脚本执行失败（退出码 {}）".format(result.returncode))
+                if error_output:
+                    print("    {}".format(error_output.splitlines()[-1]))
+                return
             # 从输出中提取打包文件路径
             for line in output.split('\n'):
                 if '/tmp/aio_collected_logs/' in line and '.tar.gz' in line:
@@ -527,6 +554,8 @@ class TaskDiagnostic:
         print("=" * 70)
 
         os.makedirs(OUTPUT_BASE, exist_ok=True)
+        if os.path.isdir(self.output_dir):
+            shutil.rmtree(self.output_dir)
         os.makedirs(self.output_dir, exist_ok=True)
 
         self.query_task_info()

@@ -14,7 +14,7 @@ bash aio-scripts.install
 也可以使用 Release 包：
 
 ```bash
-wget https://github.com/tyler-fire/aio-scripts/releases/download/v2.1.12/aio-scripts.install
+wget https://github.com/tyler-fire/aio-scripts/releases/download/v2.1.13/aio-scripts.install
 bash aio-scripts.install
 ```
 
@@ -81,10 +81,16 @@ bash /opt/aio/ps_scripts/aio-file-push.sh -f /opt/aio/user_tmp/patch.tar.gz -w 1
 
 ## 版本信息
 
-- 当前版本: **2.1.12**
-- 发布日期: 2026-07-09
+- 当前版本: **2.1.13**
+- 发布日期: 2026-07-10
 
 ## 更新日志
+
+### v2.1.13 (2026-07-10)
+
+- `aio-diagnose.py` 升级到 1.0.2。已结束任务的 `end_time` 为空时改用 `update_time`，不再把日志窗口错误延长到当前时间。
+- 日志收集器从 `aio-diagnose.py` 所在目录调用，运行目录统一为 `/opt/aio/ps_scripts`。
+- 重跑同一任务诊断前清理未完成的临时工作目录，避免旧日志混入新诊断包。
 
 ### v2.1.12 (2026-07-09)
 
