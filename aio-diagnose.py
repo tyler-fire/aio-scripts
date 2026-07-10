@@ -1,17 +1,19 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
-# 版本: 1.0.2
+# 版本: 1.0.3
 """
-AIO 任务诊断工具
+AIO 任务完整分析包工具
 
 功能：
-  根据任务 ID 收集完整诊断信息，包括：
+  根据任务 ID 收集整体分析信息，包括：
   - 任务日志（所有阶段）
   - 数据库记录快照
   - 服务日志（时间窗口）
   - 系统日志（时间窗口+关键词过滤）
-  - Worker 状态
-  - 诊断报告
+  - 分析包说明
+
+用途：
+  将生成的 tar.gz 整体包上传到 AIO Log 分析平台进行分析。
 
 用法：
   python3 aio-diagnose.py <task_id>
@@ -20,7 +22,7 @@ AIO 任务诊断工具
   /tmp/aio_diagnosis/task_<id>_diagnosis_<timestamp>.tar.gz
 """
 
-VERSION = "1.0.2"
+VERSION = "1.0.3"
 
 import os
 import sys
@@ -275,7 +277,7 @@ def filter_log_file_by_window(src, dst, time_window, keyword_only=False):
 
 
 class TaskDiagnostic:
-    """任务诊断器"""
+    """任务完整分析包收集器"""
 
     def __init__(self, task_id):
         self.task_id = task_id
@@ -483,13 +485,13 @@ class TaskDiagnostic:
                 pass
 
     def generate_report(self):
-        """生成诊断报告"""
-        print("\n[6/6] 生成诊断报告...")
+        """生成分析包说明"""
+        print("\n[6/6] 生成分析包说明...")
         report_file = os.path.join(self.output_dir, "DIAGNOSIS_REPORT.txt")
 
         with open(report_file, 'w', encoding='utf-8') as f:
             f.write("=" * 70 + "\n")
-            f.write("AIO 任务诊断报告\n")
+            f.write("AIO 任务完整分析包说明\n")
             f.write("=" * 70 + "\n\n")
             f.write("任务 ID: {}\n".format(self.task_id))
             f.write("任务编号: {}\n".format(self.task_info['task_num']))
@@ -499,8 +501,9 @@ class TaskDiagnostic:
             f.write("开始时间: {}\n".format(self.task_info.get('start_time') or 'N/A'))
             f.write("结束时间: {}\n".format(self.task_info.get('end_time') or 'N/A'))
             f.write("\n")
-            f.write("诊断时间: {}\n".format(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
-            f.write("诊断工具: aio-diagnose.py v{}\n".format(VERSION))
+            f.write("收集时间: {}\n".format(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+            f.write("收集工具: aio-diagnose.py v{}\n".format(VERSION))
+            f.write("用途: 将本 tar.gz 整体包上传到 AIO Log 分析平台进行分析。\n")
             f.write("\n")
             f.write("=" * 70 + "\n")
             f.write("收集内容\n")
@@ -524,7 +527,7 @@ class TaskDiagnostic:
             f.write("4. 查看系统日志： cat system_logs/*.log\n")
             f.write("\n")
 
-        print("  ✓ DIAGNOSIS_REPORT.txt")
+        print("  ✓ DIAGNOSIS_REPORT.txt（分析包说明）")
 
     def package(self):
         """打包"""
@@ -540,17 +543,19 @@ class TaskDiagnostic:
         size_mb = os.path.getsize(package_path) / 1024 / 1024
 
         print("\n" + "=" * 70)
-        print("诊断完成!")
+        print("任务完整分析包生成完成!")
         print("  输出: {}".format(package_path))
         print("  大小: {:.2f} MB".format(size_mb))
+        print("  用途: 将该 tar.gz 整体包上传到 AIO Log 分析平台进行分析。")
         print("=" * 70)
         return package_path
 
     def diagnose(self):
         """执行完整诊断"""
         print("\n" + "=" * 70)
-        print("AIO 任务诊断工具 v{}".format(VERSION))
+        print("AIO 任务完整分析包工具 v{}".format(VERSION))
         print("任务 ID: {}".format(self.task_id))
+        print("用途: 生成整体 tar.gz 包，供 AIO Log 分析平台分析。")
         print("=" * 70)
 
         os.makedirs(OUTPUT_BASE, exist_ok=True)
@@ -569,17 +574,17 @@ class TaskDiagnostic:
 
 def main():
     if len(sys.argv) >= 2 and sys.argv[1] in ('--help', '-h'):
-        print("AIO 任务诊断工具 v{}".format(VERSION))
+        print("AIO 任务完整分析包工具 v{}".format(VERSION))
         print("")
         print("用法: python3 aio-diagnose.py <task_id>")
         print("")
         print("功能:")
-        print("  根据任务 ID 收集完整诊断信息，包括：")
+        print("  根据任务 ID 收集完整分析信息，生成供 AIO Log 分析平台使用的整体包，包括：")
         print("  - 任务日志（所有阶段）")
         print("  - 数据库记录快照")
         print("  - 服务日志（时间窗口）")
         print("  - 系统日志（时间窗口+关键词过滤）")
-        print("  - 诊断报告")
+        print("  - 分析包说明")
         print("")
         print("输出:")
         print("  /tmp/aio_diagnosis/task_<id>_diagnosis_<timestamp>.tar.gz")

@@ -1,5 +1,5 @@
 #!/bin/bash
-# 版本: 1.1.0
+# 版本: 1.1.1
 # 主机 hang / 断连 / 重启后的边界化日志收集工具
 
 set -u
@@ -14,6 +14,19 @@ COLLECT_DIR="${BASE_DIR}/hang_collect"
 START_TIME=""
 END_TIME=""
 INCLUDE_AIO_LOGS=""
+ARCHIVE_FILE=""
+
+cleanup_on_exit() {
+    local rc=$?
+
+    if [ "$rc" -ne 0 ]; then
+        rm -rf "$BASE_DIR"
+        [ -n "$ARCHIVE_FILE" ] && rm -f "$ARCHIVE_FILE"
+    fi
+}
+
+trap cleanup_on_exit EXIT
+trap 'exit 130' INT TERM
 
 say() {
     echo "$@"
@@ -394,6 +407,7 @@ make_archive() {
     local archive
 
     archive="${BASE_DIR}.tar.gz"
+    ARCHIVE_FILE="$archive"
     if ! tar -czf "$archive" -C "$BASE_DIR" hang_collect; then
         say "[ERROR] 打包失败: $archive"
         exit 1
@@ -402,6 +416,7 @@ make_archive() {
         say "[ERROR] 归档校验失败: $archive"
         exit 1
     fi
+    rm -rf "$BASE_DIR"
     say ""
     say "========================================"
     say " 收集完成"

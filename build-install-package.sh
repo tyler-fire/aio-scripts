@@ -4,7 +4,7 @@
 
 set -e
 
-VERSION="2.1.13"
+VERSION="2.1.14"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUTPUT_FILE="$SCRIPT_DIR/aio-scripts.install"
 OUTPUT_TMP="$OUTPUT_FILE.tmp.$$"
@@ -303,6 +303,10 @@ if [[ "$publish" =~ ^[Yy]$ ]]; then
     echo "  创建新 Release v${VERSION}..."
 RELEASE_BODY="## 本次更新
 
+- **任务完整分析包定位** - 菜单 2 从“任务诊断”改为“任务完整分析包”，明确生成的整体 tar.gz 用于上传到 AIO Log 分析平台分析。
+- **主机异常日志远端路径** - 菜单 12 通过 RPC 上传收集脚本时，统一使用 Worker 的 \`/opt/aio/user_tmp\`，不再把可执行脚本放到 \`/tmp\`。
+- **远端目录与清理** - 工具会先通过 RPC 创建并限制 \`/opt/aio/user_tmp\` 权限，上传或执行失败时清理残留脚本。
+- **远端脚本防替换** - 执行前校验本地与远端脚本 SHA-256，并通过已打开的文件描述符执行同一内容，降低普通用户替换脚本的竞态风险。
 - **aio-diagnose.py 结束时间修复** - 已结束任务的 \`end_time\` 为空时使用 \`update_time\`，不再错误收集到当前时间的全部服务日志。
 - **aio-diagnose.py 路径修复** - 日志收集器固定从当前 \`/opt/aio/ps_scripts\` 目录调用，不再依赖旧目录。
 - **aio-diagnose.py 重跑修复** - 每次诊断前清理该任务未完成的临时目录，避免旧日志混入新诊断包。
@@ -333,7 +337,7 @@ bash /opt/aio/ps_scripts/aio-tools.sh
 ## 包含工具
 
 - aio-tools.sh - 运维工具菜单
-- aio-diagnose.py - 任务诊断
+- aio-diagnose.py - 任务完整分析包
 - aio-worker-performance.py - Worker 性能分析（新增自动发现）
 - aio-collect-logs.py - 日志收集（新增子任务过滤）
 - aio-unlock-tasks.py - 任务解锁
@@ -347,6 +351,9 @@ bash /opt/aio/ps_scripts/aio-tools.sh
 
 ## 📝 更新日志
 
+- aio-tools.sh 1.2.6: 菜单 2 改为任务完整分析包；菜单 12 远端脚本使用 /opt/aio/user_tmp
+- aio-diagnose.py 1.0.3: 明确整体包用于上传到 AIO Log 分析平台分析
+- aio-collect-hang-logs.sh 1.1.1: 配合新的远端脚本落盘与清理流程
 - aio-diagnose.py 1.0.2: 修复空 end_time、旧收集器路径和重跑残留问题
 - aio-tools.sh 1.2.5: File 推送入口命名调整
 - aio-tools.sh 1.2.4: 新增 File 推送入口

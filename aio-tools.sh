@@ -1,5 +1,5 @@
 #!/bin/bash
-# 版本: 1.2.5
+# 版本: 1.2.6
 # AIO 运维工具集入口
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 RPC_PORT="${RPC_PORT:-6611}"
@@ -15,7 +15,7 @@ fi
 # 子工具定义（文件名|功能描述）
 TOOLS=(
     "aio-collect-logs.py|日志收集"
-    "aio-diagnose.py|任务诊断"
+    "aio-diagnose.py|任务完整分析包"
     "aio-worker-performance.py|性能分析"
     "aio-fsdeamon-cleanup.sh|fsdeamon清理"
     "aio-unlock-tasks.py|任务解锁"
@@ -64,7 +64,7 @@ show_menu() {
     echo " AIO 运维工具集"
     echo "========================================"
     echo "  1) 日志收集    - 根据任务ID收集日志(默认只收失败子任务,输入「全部」可收全部)"
-    echo "  2) 任务诊断    - 完整诊断(日志+数据库+服务+系统)"
+    echo "  2) 任务完整分析包 - 收集任务整体信息，供Log分析平台分析"
     echo "  3) 性能分析    - Worker性能趋势(基于sar数据)"
     echo "  4) fsdeamon清理 - 清理fsdeamon残留挂载和进程"
     echo "  5) 任务解锁    - 将卡住的running任务标记为failed"
@@ -107,6 +107,9 @@ tool_collect_logs() {
 }
 
 tool_diagnose() {
+    echo "说明: 本工具收集任务日志、数据库记录、服务日志和系统日志。"
+    echo "生成的整体 tar.gz 包用于上传到 AIO Log 分析平台进行分析。"
+    echo ""
     read -rp "请输入任务ID (在Web页面任务列表查看): " task_id
     if [ -z "$task_id" ]; then
         echo "[ERROR] 任务ID不能为空"
@@ -191,7 +194,8 @@ tool_collect_hang_logs() {
     local end_time
     local include_aio
     local include_arg="--no-include-aio"
-    local remote_script="/tmp/aio-collect-hang-logs.$$.sh"
+    local remote_dir="/opt/aio/user_tmp"
+    local remote_script="${remote_dir}/aio-collect-hang-logs.$$.sh"
     local remote_output
     local remote_archive
     local remote_rc
@@ -201,6 +205,8 @@ tool_collect_hang_logs() {
     local q_start
     local q_end
     local q_remote_script
+    local q_remote_dir
+    local script_sha256
 
     if [ ! -x "$SCRIPT_DIR/aio-collect-hang-logs.sh" ]; then
         echo "[ERROR] 收集脚本不存在或不可执行: $SCRIPT_DIR/aio-collect-hang-logs.sh"
@@ -262,6 +268,13 @@ tool_collect_hang_logs() {
         return 1
     fi
 
+    q_remote_dir=$(shell_quote "$remote_dir")
+    echo "▸ 准备目标主机临时目录: $remote_dir"
+    if ! rpc_cmd "$target_ip" "[ ! -L $q_remote_dir ] && mkdir -p $q_remote_dir && [ -d $q_remote_dir ] && chmod 700 $q_remote_dir" >/dev/null; then
+        echo "[ERROR] 无法通过 RPC 创建目标目录: $remote_dir"
+        return 1
+    fi
+
     echo "▸ RPC 可用，上传收集脚本..."
     local upload_log
     local download_log
@@ -272,6 +285,7 @@ tool_collect_hang_logs() {
     if ! timeout 60 "$RPC_BIN" -h "$target_ip" -p "$RPC_PORT" --upload 1 --local "$SCRIPT_DIR/aio-collect-hang-logs.sh" --remote "$remote_script" >"$upload_log" 2>&1; then
         echo "[WARN] 上传脚本失败:"
         sed -n '1,20p' "$upload_log"
+        rpc_cmd "$target_ip" "rm -f $(shell_quote "$remote_script")" >/dev/null 2>&1 || true
         rm -f "$upload_log" "$download_log"
         manual_hang_collect_hint "$target_ip" "$start_time" "$end_time" "$include_aio"
         return 1
@@ -281,7 +295,8 @@ tool_collect_hang_logs() {
     q_remote_script=$(shell_quote "$remote_script")
     q_start=$(shell_quote "$start_time")
     q_end=$(shell_quote "$end_time")
-    cmd="chmod +x $q_remote_script && bash $q_remote_script --start $q_start --end $q_end $include_arg"
+    script_sha256=$(sha256sum "$SCRIPT_DIR/aio-collect-hang-logs.sh" | awk '{print $1}')
+    cmd="exec 9< $q_remote_script || exit 70; actual=\$(sha256sum /proc/self/fd/9 | awk '{print \$1}'); [ \"\$actual\" = '$script_sha256' ] || { echo '[ERROR] 远端收集脚本校验失败'; exit 71; }; timeout 840 bash /proc/self/fd/9 --start $q_start --end $q_end $include_arg"
 
     echo "▸ 在目标主机执行收集..."
     remote_output=$(timeout 900 "$RPC_BIN" -h "$target_ip" -p "$RPC_PORT" -c "$cmd" 2>&1)
@@ -289,6 +304,7 @@ tool_collect_hang_logs() {
     echo "$remote_output"
     if [ "$remote_rc" -ne 0 ]; then
         echo "[ERROR] 远端收集命令失败或超时，退出码: $remote_rc"
+        rpc_cmd "$target_ip" "rm -f $q_remote_script" >/dev/null 2>&1 || true
         rm -f "$download_log"
         manual_hang_collect_hint "$target_ip" "$start_time" "$end_time" "$include_aio"
         return 1
@@ -296,12 +312,14 @@ tool_collect_hang_logs() {
     remote_archive=$(echo "$remote_output" | awk -F= '/^ARCHIVE_PATH=/ {print $2}' | tail -1 | tr -d '\r')
     if [ -z "$remote_archive" ]; then
         echo "[ERROR] 未能从远端输出中识别日志包路径"
+        rpc_cmd "$target_ip" "rm -f $q_remote_script" >/dev/null 2>&1 || true
         rm -f "$download_log"
         manual_hang_collect_hint "$target_ip" "$start_time" "$end_time" "$include_aio"
         return 1
     fi
     if ! [[ "$remote_archive" =~ ^/tmp/hang_collect_[A-Za-z0-9._-]+_[0-9]{8}_[0-9]{6}_[0-9]+\.tar\.gz$ ]]; then
         echo "[ERROR] 远端日志包路径不符合预期: $remote_archive"
+        rpc_cmd "$target_ip" "rm -f $q_remote_script" >/dev/null 2>&1 || true
         rm -f "$download_log"
         return 1
     fi
@@ -314,6 +332,10 @@ tool_collect_hang_logs() {
     if timeout 300 "$RPC_BIN" -h "$target_ip" -p "$RPC_PORT" --download 1 --remote "$remote_archive" --local "$local_archive" >"$download_log" 2>&1; then
         if [ ! -s "$local_archive" ] || ! tar -tzf "$local_archive" >/dev/null 2>&1; then
             echo "[ERROR] 下载后的日志包为空或不是有效 tar.gz: $local_archive"
+            rm -f "$local_archive"
+            rmdir "$local_dir" 2>/dev/null || true
+            rpc_cmd "$target_ip" "rm -f $q_remote_script" >/dev/null 2>&1 || true
+            echo "远端日志包暂时保留，可稍后重新下载: $remote_archive"
             rm -f "$download_log"
             return 1
         fi
@@ -325,6 +347,9 @@ tool_collect_hang_logs() {
     else
         echo "[WARN] 下载日志包失败:"
         sed -n '1,30p' "$download_log"
+        rm -f "$local_archive"
+        rmdir "$local_dir" 2>/dev/null || true
+        rpc_cmd "$target_ip" "rm -f $q_remote_script" >/dev/null 2>&1 || true
         echo ""
         echo "远端日志包已生成: $remote_archive"
         echo "可稍后从目标主机取回。"
@@ -447,7 +472,7 @@ while true; do
         0) echo "退出."; exit 0 ;;
         -v|--version) show_versions ;;
         1) run_tool "日志收集" 1 ;;
-        2) run_tool "任务诊断" 2 ;;
+        2) run_tool "任务完整分析包" 2 ;;
         3) run_tool "性能分析" 3 ;;
         4) run_tool "fsdeamon清理" 4 ;;
         5) run_tool "任务解锁" 5 ;;

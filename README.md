@@ -14,7 +14,7 @@ bash aio-scripts.install
 也可以使用 Release 包：
 
 ```bash
-wget https://github.com/tyler-fire/aio-scripts/releases/download/v2.1.13/aio-scripts.install
+wget https://github.com/tyler-fire/aio-scripts/releases/download/v2.1.14/aio-scripts.install
 bash aio-scripts.install
 ```
 
@@ -29,14 +29,14 @@ bash aio-scripts.install
 | 工具 | 说明 |
 |------|------|
 | **aio-tools.sh** | 运维工具菜单（推荐使用） |
-| **aio-diagnose.py** | 任务诊断工具 |
+| **aio-diagnose.py** | 任务完整分析包，产物上传到 AIO Log 分析平台 |
 | **aio-worker-performance.py** | Worker 性能分析 |
-| **aio-collect-logs.py** | 日志收集工具 |
+| **aio-collect-logs.py** | 按任务 ID 定向收集阶段日志 |
 | **aio-unlock-tasks.py** | 任务解锁工具 |
 | **aio-fsdeamon-cleanup.sh** | fsdeamon 清理工具 |
 | **check_aiopool_usage.py** | aiopool 空间检查 |
 | **aio-collect-v.sh** | 版本信息收集 |
-| **aio-collect-hang-logs.sh** | 主机异常日志收集 |
+| **aio-collect-hang-logs.sh** | 按主机和时间窗口收集异常日志 |
 | **aio-file-push.sh** | 文件 RPC 推送到 Worker |
 | **goldendb/** | GoldenDB 快照/日志本地清理脚本，以及脚本分发工具 |
 | **ops / ops_arm** | 文件加解密工具 |
@@ -48,6 +48,12 @@ bash aio-scripts.install
 ```bash
 bash /opt/aio/ps_scripts/aio-tools.sh
 ```
+
+三个日志入口保持独立：
+
+- 菜单 `1`：定向任务日志，可筛选失败子任务和阶段。
+- 菜单 `2`：任务完整分析包，输入 `aio_total_task.id`，生成的整个 tar.gz 直接上传到 AIO Log 分析平台。
+- 菜单 `12`：主机异常日志，按目标主机和起止时间收集；远端脚本临时上传到 `/opt/aio/user_tmp`。
 
 GoldenDB 脚本分发：
 
@@ -81,10 +87,17 @@ bash /opt/aio/ps_scripts/aio-file-push.sh -f /opt/aio/user_tmp/patch.tar.gz -w 1
 
 ## 版本信息
 
-- 当前版本: **2.1.13**
+- 当前版本: **2.1.14**
 - 发布日期: 2026-07-10
 
 ## 更新日志
+
+### v2.1.14 (2026-07-10)
+
+- 菜单 `2` 更名为“任务完整分析包”，明确整个 tar.gz 用于上传到 AIO Log 分析平台。
+- `aio-diagnose.py` 升级到 1.0.3，菜单、帮助、包内说明和完成提示统一更新。
+- 菜单 `12` 远端脚本改为上传到 `/opt/aio/user_tmp`，并补充目录校验、SHA-256 校验和失败清理。
+- `aio-collect-hang-logs.sh` 升级到 1.1.1，失败时清理工作目录，成功打包后删除未压缩的临时目录。
 
 ### v2.1.13 (2026-07-10)
 
