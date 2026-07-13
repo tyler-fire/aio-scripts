@@ -1,9 +1,10 @@
 #!/bin/bash
-# 版本: 1.4.2
+# 版本: 1.5.0
 # AIO 工具版本收集脚本
 # 用法:
 #   ./aio-collect-v.sh              # 自动从数据库获取 Server / Worker / Agent 主机
-#   ./aio-collect-v.sh IP1 IP2 ...  # 手动指定 Agent 主机
+#   ./aio-collect-v.sh IP1 IP2 ...  # 手动指定多个主机，自动识别 Worker / Agent
+#   ./aio-collect-v.sh 'IP1,IP2'    # 也支持逗号分隔
 
 set -uo pipefail
 
@@ -80,6 +81,8 @@ LOCAL_IP=""
 declare -A VERSIONS
 declare -A ARCHS
 declare -A STATUS
+declare -A DB_ROLES
+declare -A ROLE_PROBE_ERRORS
 
 skip_agent_tool() {
     local tool="$1"
@@ -163,8 +166,13 @@ normalize_role() {
     case "$1" in
         rdb|server) echo "server" ;;
         storage|worker) echo "worker" ;;
+        unknown) echo "unknown" ;;
         *) echo "agent" ;;
     esac
+}
+
+valid_host() {
+    [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]
 }
 
 add_host() {
@@ -204,7 +212,16 @@ load_hosts_from_db() {
 
     if [[ "${has_connector}" == "1" ]]; then
         rows=$(run_sql "${db_host}" \
-            "SELECT c.remote_host, COALESCE(MIN(r.role), 'agent')
+            "SELECT c.remote_host,
+                    CASE MAX(CASE r.role
+                        WHEN 'rdb' THEN 3
+                        WHEN 'storage' THEN 2
+                        ELSE 1
+                    END)
+                        WHEN 3 THEN 'server'
+                        WHEN 2 THEN 'worker'
+                        ELSE 'agent'
+                    END
              FROM rdb_connector c
              LEFT JOIN rdb_connector_role r ON r.connector_id = c.id
              WHERE c.remote_host IS NOT NULL AND c.remote_host <> ''
@@ -222,6 +239,42 @@ load_hosts_from_db() {
     done <<< "${rows}"
 }
 
+load_role_map_from_db() {
+    local db_host="$1"
+    local has_connector rows host role
+
+    DB_ROLES["${db_host}"]="server"
+    has_connector=$(run_sql "${db_host}" \
+        "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='rdb_connector';" || true)
+
+    if [[ "${has_connector}" == "1" ]]; then
+        rows=$(run_sql "${db_host}" \
+            "SELECT c.remote_host,
+                    CASE MAX(CASE r.role
+                        WHEN 'rdb' THEN 3
+                        WHEN 'storage' THEN 2
+                        ELSE 1
+                    END)
+                        WHEN 3 THEN 'server'
+                        WHEN 2 THEN 'worker'
+                        ELSE 'agent'
+                    END
+             FROM rdb_connector c
+             LEFT JOIN rdb_connector_role r ON r.connector_id = c.id
+             WHERE c.remote_host IS NOT NULL AND c.remote_host <> ''
+             GROUP BY c.id, c.remote_host;" || true)
+    else
+        rows=$(run_sql "${db_host}" \
+            "SELECT DISTINCT sys_dn_ipaddr, 'worker' FROM aio_data_nodes WHERE sys_dn_is_delete = 0;" || true)
+    fi
+
+    while IFS=$'\t' read -r host role || [[ -n "${host}" ]]; do
+        host=$(echo "${host}" | tr -d '[:space:]')
+        [[ -z "${host}" ]] && continue
+        DB_ROLES["${host}"]=$(normalize_role "${role}")
+    done <<< "${rows}"
+}
+
 rpc_exec() {
     local host="$1"
     local cmd="$2"
@@ -231,6 +284,52 @@ rpc_exec() {
 probe_rpc() {
     local host="$1"
     rpc_exec "${host}" "/bin/date"
+}
+
+detect_remote_role() {
+    local host="$1"
+    local detected
+
+    if ! detected=$(rpc_exec "${host}" \
+        "if [ -d /opt/aio/cdm ]; then echo server; elif [ -x /opt/aio/airflow/bin/airflow ] || [ -f /opt/aio/cfg/airflow.cfg ]; then echo worker; else echo agent; fi"); then
+        ROLE_PROBE_ERRORS["${host}"]=$(echo "${detected}" | head -1)
+        echo "unknown"
+        return
+    fi
+    detected=$(echo "${detected}" | tr -d '[:space:]')
+    case "${detected}" in
+        server|worker|agent) echo "${detected}" ;;
+        *) echo "unknown" ;;
+    esac
+}
+
+resolve_manual_role() {
+    local host="$1"
+
+    if [[ -n "${DB_ROLES[${host}]:-}" ]]; then
+        echo "${DB_ROLES[${host}]}"
+    else
+        detect_remote_role "${host}"
+    fi
+}
+
+add_manual_hosts() {
+    local db_host="$1"
+    shift
+    local input host role
+
+    load_role_map_from_db "${db_host}"
+    for input in "$@"; do
+        input=${input//,/ }
+        for host in ${input}; do
+            if ! valid_host "${host}"; then
+                echo "警告: 忽略无效主机: ${host}" >&2
+                continue
+            fi
+            role=$(resolve_manual_role "${host}")
+            add_host "${host}" "${role}"
+        done
+    done
 }
 
 local_exec() {
@@ -300,6 +399,22 @@ show_host_list() {
     echo ""
 }
 
+print_unknown_summary() {
+    local idx host
+
+    has_role "unknown" || return
+
+    echo ""
+    echo "========================================"
+    echo " Unknown"
+    echo "========================================"
+    for idx in "${!HOSTS[@]}"; do
+        [[ "${ROLES[$idx]}" == "unknown" ]] || continue
+        host="${HOSTS[$idx]}"
+        echo "  ${host}: ${STATUS[${host}]:-无法识别主机角色}"
+    done
+}
+
 has_role() {
     local role="$1"
     local idx
@@ -316,6 +431,11 @@ collect_versions() {
         host="${HOSTS[$idx]}"
         role="${ROLES[$idx]}"
         STATUS["${host}"]="ok"
+
+        if [[ "${role}" == "unknown" && -n "${ROLE_PROBE_ERRORS[${host}]:-}" ]]; then
+            STATUS["${host}"]="RPC 不可达: ${ROLE_PROBE_ERRORS[${host}]}"
+            continue
+        fi
 
         if [[ "${host}" != "${LOCAL_IP}" || "${role}" != "server" ]]; then
             if ! probe_output=$(probe_rpc "${host}" 2>&1); then
@@ -492,9 +612,11 @@ main() {
     LOCAL_IP=$(read_env AIO_WEBSRV_HOST)
 
     if [[ $# -gt 0 ]]; then
-        for host in "$@"; do
-            add_host "${host}" "agent"
-        done
+        if [[ -z "${LOCAL_IP}" ]]; then
+            echo "错误: 无法从 ${AIO_ENV} 读取 AIO_WEBSRV_HOST"
+            exit 1
+        fi
+        add_manual_hosts "${LOCAL_IP}" "$@"
     else
         if [[ -z "${LOCAL_IP}" ]]; then
             echo "错误: 无法从 ${AIO_ENV} 读取 AIO_WEBSRV_HOST"
@@ -514,10 +636,12 @@ main() {
     show_host_list "server" "Server"
     show_host_list "worker" "Worker"
     show_host_list "agent" "Agent"
+    show_host_list "unknown" "Unknown"
 
     collect_versions
     print_core_table
     print_agent_summary
+    print_unknown_summary
 }
 
 main "$@"

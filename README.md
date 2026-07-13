@@ -14,7 +14,7 @@ bash aio-scripts.install
 也可以使用 Release 包：
 
 ```bash
-wget https://github.com/tyler-fire/aio-scripts/releases/download/v2.1.14/aio-scripts.install
+wget https://github.com/tyler-fire/aio-scripts/releases/download/v2.1.15/aio-scripts.install
 bash aio-scripts.install
 ```
 
@@ -39,6 +39,7 @@ bash aio-scripts.install
 | **aio-collect-hang-logs.sh** | 按主机和时间窗口收集异常日志 |
 | **aio-file-push.sh** | 文件 RPC 推送到 Worker |
 | **goldendb/** | GoldenDB 快照/日志本地清理脚本，以及脚本分发工具 |
+| **docs/** | 运维排障手册 |
 | **ops / ops_arm** | 文件加解密工具 |
 
 ## 使用方式
@@ -85,12 +86,34 @@ bash /opt/aio/ps_scripts/aio-file-push.sh -f '/opt/aio/user_tmp/*.enc'
 bash /opt/aio/ps_scripts/aio-file-push.sh -f /opt/aio/user_tmp/patch.tar.gz -w 10.7.16.217
 ```
 
+多主机版本收集：
+
+```bash
+bash /opt/aio/ps_scripts/aio-tools.sh
+# 选择 6) 版本收集
+# 输入多个 IP 时使用逗号或空格分隔；直接回车自动读取数据库中的全部主机
+
+# 也可以直接执行
+bash /opt/aio/ps_scripts/aio-collect-v.sh 10.7.16.217 10.7.16.66
+bash /opt/aio/ps_scripts/aio-collect-v.sh '10.7.16.217,10.7.16.66'
+```
+
+手工输入的主机优先使用 MySQL 中登记的角色。未登记主机会通过 RPC 检查远端环境并识别为 Server、Worker 或 Agent；RPC 不可达时显示为 Unknown。
+
 ## 版本信息
 
-- 当前版本: **2.1.14**
-- 发布日期: 2026-07-10
+- 当前版本: **2.1.15**
+- 发布日期: 2026-07-13
 
 ## 更新日志
+
+### v2.1.15 (2026-07-13)
+
+- 菜单 `6` 支持一次输入多个 Worker 或 Agent IP，逗号和空格分隔均可。
+- 直接回车时维持原行为，自动从 MySQL 收集全部 Server、Worker 和 Agent。
+- 手工输入的 IP 优先使用 MySQL 角色；未登记主机通过 RPC 检查远端 AIO 环境并自动分类。
+- RPC 不可达且无法识别角色的主机显示为 Unknown，不再误报为 Agent。
+- `aio-collect-v.sh` 升级到 1.5.0，`aio-tools.sh` 升级到 1.2.8。
 
 ### v2.1.14 (2026-07-10)
 

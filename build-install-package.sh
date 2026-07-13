@@ -4,7 +4,7 @@
 
 set -e
 
-VERSION="2.1.14"
+VERSION="2.1.15"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUTPUT_FILE="$SCRIPT_DIR/aio-scripts.install"
 OUTPUT_TMP="$OUTPUT_FILE.tmp.$$"
@@ -42,6 +42,7 @@ CORE_TOOLS=(
     "aio-collect-hang-logs.sh"
     "check_aiopool_usage.py"
     "aio-file-push.sh"
+    "docs"
     "goldendb"
     "license.sh"
     "ops"
@@ -172,6 +173,7 @@ CORE_TOOLS=(
     "aio-collect-hang-logs.sh"
     "check_aiopool_usage.py"
     "aio-file-push.sh"
+    "docs"
     "goldendb"
     "license.sh"
     "ops"
@@ -303,6 +305,8 @@ if [[ "$publish" =~ ^[Yy]$ ]]; then
     echo "  创建新 Release v${VERSION}..."
 RELEASE_BODY="## 本次更新
 
+- **多主机版本收集** - 菜单 6 支持一次输入多个 IP，逗号或空格分隔；直接回车仍自动收集数据库中的全部主机。
+- **Worker / Agent 自动识别** - 手工输入的 IP 优先使用 MySQL 角色，未登记主机再通过 RPC 检查远端 AIO 目录；无法连接的主机显示为 Unknown，不再误报为 Agent。
 - **任务完整分析包定位** - 菜单 2 从“任务诊断”改为“任务完整分析包”，明确生成的整体 tar.gz 用于上传到 AIO Log 分析平台分析。
 - **主机异常日志远端路径** - 菜单 12 通过 RPC 上传收集脚本时，统一使用 Worker 的 \`/opt/aio/user_tmp\`，不再把可执行脚本放到 \`/tmp\`。
 - **远端目录与清理** - 工具会先通过 RPC 创建并限制 \`/opt/aio/user_tmp\` 权限，上传或执行失败时清理残留脚本。
@@ -351,6 +355,8 @@ bash /opt/aio/ps_scripts/aio-tools.sh
 
 ## 📝 更新日志
 
+- aio-tools.sh 1.2.8: 菜单 6 支持一次输入多个 Worker / Agent IP
+- aio-collect-v.sh 1.5.0: 支持逗号或空格分隔的多主机版本收集，并自动识别 Server / Worker / Agent
 - aio-tools.sh 1.2.6: 菜单 2 改为任务完整分析包；菜单 12 远端脚本使用 /opt/aio/user_tmp
 - aio-diagnose.py 1.0.3: 明确整体包用于上传到 AIO Log 分析平台分析
 - aio-collect-hang-logs.sh 1.1.1: 配合新的远端脚本落盘与清理流程

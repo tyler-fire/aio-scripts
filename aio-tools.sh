@@ -1,5 +1,5 @@
 #!/bin/bash
-# 版本: 1.2.6
+# 版本: 1.2.8
 # AIO 运维工具集入口
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 RPC_PORT="${RPC_PORT:-6611}"
@@ -68,7 +68,7 @@ show_menu() {
     echo "  3) 性能分析    - Worker性能趋势(基于sar数据)"
     echo "  4) fsdeamon清理 - 清理fsdeamon残留挂载和进程"
     echo "  5) 任务解锁    - 将卡住的running任务标记为failed"
-    echo "  6) 版本收集    - 收集本机和Worker的工具版本"
+    echo "  6) 版本收集    - 自动发现或输入多个Worker/Agent IP"
     echo "  7) 存储检查    - 检查Worker的aiopool磁盘空间"
     echo "  8) GoldenDB脚本分发 - 复制3个本地清理脚本到Worker"
     echo "  9) File推送    - 通过RPC推送文件到Worker"
@@ -142,7 +142,19 @@ tool_fsdeamon_cleanup() {
 }
 
 tool_collect_versions() {
-    bash "$SCRIPT_DIR/aio-collect-v.sh"
+    local input
+    local hosts=()
+
+    echo "输入多个 IP 时可使用逗号或空格分隔。"
+    echo "脚本会结合 MySQL 记录和远端环境自动识别 Worker / Agent。"
+    read -rp "请输入目标 IP (回车=自动收集数据库中的全部主机): " input
+    input=${input//,/ }
+    if [[ -z "${input//[[:space:]]/}" ]]; then
+        bash "$SCRIPT_DIR/aio-collect-v.sh"
+    else
+        read -r -a hosts <<< "$input"
+        bash "$SCRIPT_DIR/aio-collect-v.sh" "${hosts[@]}"
+    fi
 }
 
 tool_check_aiopool() {
