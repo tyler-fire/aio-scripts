@@ -1,194 +1,50 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
-# 版本: 1.1.1
+# 版本: 1.2.0
 """从Server端通过RPC统计Worker节点上aiopool的磁盘空间占用
 
+v1.2.0: aio.env/ENC/mysql/RPC/Worker发现统一走 lib/aio_common；退出时清理临时文件
 v1.1.1: RPC命令超时不再中断整次检查, 会在对应Worker结果中提示超时
 v1.1.0: 末尾新增所有Worker的aiopool存储汇总表(每行一个Worker, 一眼对比)
 """
 
 import sys
-import subprocess
 import os
-import base64
-import tempfile
 
-AIO_HOME = "/opt/aio"
-RPC_BASE = "{}/airflow/tools/rpc".format(AIO_HOME)
-RPC = "{}/{}/rpc".format(RPC_BASE, os.uname().machine)
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(SCRIPT_DIR, "lib"))
+import aio_common
+
+AIO_HOME = aio_common.AIO_HOME
 RPC_TIMEOUT = 30
 
-
-def decrypt_enc_password(enc_str):
-    """解密ENC格式的密码"""
-    if not enc_str.startswith("ENC(") or not enc_str.endswith(")"):
-        return enc_str
-    enc_data = enc_str[4:-1]  # 去掉ENC()包装
-    try:
-        # 使用CDM的Python3.6解密, CBC模式+零IV
-        cmd = [
-            "{}/cdm/bin/python3".format(AIO_HOME), "-c",
-            "import sys, base64, os; "
-            "sys.path.insert(0, '{}/cdm/lib/python3.6/site-packages'); "
-            "from Crypto.Cipher import AES; "
-            "from Crypto.Util.Padding import unpad; "
-            "from aio.config.key import AES_KEY_BASE_64; "
-            "key = base64.b64decode(AES_KEY_BASE_64); "
-            "data = base64.b64decode(os.environ['AIO_ENC_DATA']); "
-            "decrypted = unpad(AES.new(key, AES.MODE_CBC, IV=b'0000000000000000').decrypt(data), AES.block_size); "
-            "sys.stdout.buffer.write(decrypted)".format(AIO_HOME)
-        ]
-        env = os.environ.copy()
-        env['AIO_ENC_DATA'] = enc_data
-        r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10, env=env)
-        if r.returncode == 0:
-            return r.stdout.decode('utf-8', errors='ignore')
-    except Exception:
-        pass
-    return enc_str
-
-
-def strip_quotes(s):
-    """去除首尾单引号或双引号"""
-    if len(s) >= 2 and s[0] in ("'", '"') and s[-1] == s[0]:
-        return s[1:-1]
-    return s
-
-
-# 读取配置
-SERVER_IP = None
-BROKER_URL = None
-DB_CONFIG = {}
-MYSQL_DEFAULTS_FILE = None
-
-# 优先从airflow.runtime.env读取broker_url(包含正确的DB号)
-runtime_file = "{}/cfg/airflow.runtime.env".format(AIO_HOME)
-if os.path.exists(runtime_file):
-    with open(runtime_file) as f:
-        for line in f:
-            line = line.strip()
-            if line.startswith("AIRFLOW__CELERY__BROKER_URL="):
-                BROKER_URL = line.split("=", 1)[1].strip()
-
-# 从aio.env读取Server IP和数据库配置
-env_file = "{}/cfg/aio.env".format(AIO_HOME)
-if os.path.exists(env_file):
-    with open(env_file) as f:
-        for line in f:
-            line = line.strip()
-            if line.startswith("AIO_DB_HOSTNAME="):
-                SERVER_IP = strip_quotes(line.split("=", 1)[1].strip())
-            elif line.startswith("AIO_DB_PORT="):
-                DB_CONFIG["port"] = strip_quotes(line.split("=", 1)[1].strip())
-            elif line.startswith("AIO_DB_USERNAME="):
-                DB_CONFIG["user"] = strip_quotes(line.split("=", 1)[1].strip())
-            elif line.startswith("AIO_DB_PASSWORD="):
-                DB_CONFIG["password"] = decrypt_enc_password(strip_quotes(line.split("=", 1)[1].strip()))
-            elif line.startswith("AIO_DB_NAME="):
-                DB_CONFIG["database"] = strip_quotes(line.split("=", 1)[1].strip())
+BROKER_URL = aio_common.load_broker_url()
+MYSQL = aio_common.MySQL(aio_common.load_db_config(require_env=False))
 
 
 def rpc(host, cmd):
     # rpc 客户端始终在本机(Server)上执行, 通过 6611 端口连到 Worker 上的 agent
     # 由 agent 在远端执行命令并回传结果。因此选择哪个架构的 rpc 二进制只取决于
     # 本机(Server)架构, 与远端 Worker 架构无关。
-    rpc_cmd = '{} -h {} -p 6611 -c "{}"'.format(RPC, host, cmd)
-    try:
-        r = subprocess.run(
-            rpc_cmd,
-            shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=RPC_TIMEOUT
-        )
-    except subprocess.TimeoutExpired:
+    rc, stdout, stderr = aio_common.rpc_run(host, cmd, timeout=RPC_TIMEOUT)
+    if rc == 124:
         return 124, "命令超时({}秒): {}".format(RPC_TIMEOUT, cmd)
-
-    stdout = r.stdout.decode(errors="ignore").strip()
-    stderr = r.stderr.decode(errors="ignore").strip()
-    return r.returncode, stdout or stderr
-
-
-def get_mysql_defaults_file():
-    global MYSQL_DEFAULTS_FILE
-    if MYSQL_DEFAULTS_FILE and os.path.exists(MYSQL_DEFAULTS_FILE):
-        return MYSQL_DEFAULTS_FILE
-
-    fd, path = tempfile.mkstemp(prefix="aio_mysql_", suffix=".cnf", dir="/tmp")
-    os.fchmod(fd, 0o600)
-    with os.fdopen(fd, 'w') as f:
-        f.write("[client]\n")
-        f.write("host={}\n".format(DB_CONFIG.get("host", SERVER_IP) or "127.0.0.1"))
-        f.write("port={}\n".format(DB_CONFIG.get("port", "3306")))
-        f.write("user={}\n".format(DB_CONFIG.get("user", "root")))
-        f.write("password={}\n".format(DB_CONFIG.get("password", "")))
-    MYSQL_DEFAULTS_FILE = path
-    return MYSQL_DEFAULTS_FILE
+    out = stdout.decode(errors="ignore").strip()
+    err = stderr.decode(errors="ignore").strip()
+    return rc, out or err
 
 
 def cleanup_mysql_defaults_file():
-    global MYSQL_DEFAULTS_FILE
-    if MYSQL_DEFAULTS_FILE and os.path.exists(MYSQL_DEFAULTS_FILE):
-        os.remove(MYSQL_DEFAULTS_FILE)
-    MYSQL_DEFAULTS_FILE = None
+    MYSQL.cleanup()
 
 
 def execute_mysql_query(sql):
-    defaults_file = get_mysql_defaults_file()
-    cmd = [
-        "/usr/local/mysql/bin/mysql",
-        "--defaults-extra-file={}".format(defaults_file),
-        DB_CONFIG.get("database", "aio"), "-N", "-e", sql
-    ]
-    try:
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15)
-        if result.returncode != 0:
-            return []
-        output = result.stdout.decode().strip()
-        if not output:
-            return []
-        return [line.strip() for line in output.split('\n') if line.strip()]
-    except Exception:
-        return []
+    return [row[0].strip() for row in MYSQL.query(sql, timeout=15) if row and row[0].strip()]
 
 
 def discover_workers():
     """发现Worker节点: 优先通过Celery, 失败则直接查MySQL"""
-
-    # 方式1: 通过Celery inspect发现活跃Worker
-    if BROKER_URL:
-        python_bin = "{}/airflow/bin/python3".format(AIO_HOME)
-        if not os.path.exists(python_bin):
-            python_bin = sys.executable
-
-        script = (
-            "from celery import Celery; "
-            "app = Celery(broker='{}'); "
-            "active = app.control.inspect(timeout=5).active_queues() or {{}}; "
-            "print('\\n'.join(n.split('@',1)[-1] for n in sorted(active)))"
-        ).format(BROKER_URL)
-
-        queues = []
-        try:
-            r = subprocess.run([python_bin, "-c", script],
-                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
-            if r.returncode == 0 and r.stdout.decode().strip():
-                queues = [n.strip() for n in r.stdout.decode().strip().split('\n') if n.strip()]
-        except Exception:
-            pass
-
-        if queues:
-            ips = execute_mysql_query(
-                "SELECT sys_dn_ipaddr FROM aio_data_nodes WHERE sys_dn_queue IN ({}) AND sys_dn_is_delete = 0".format(
-                    ",".join("'{}'".format(q) for q in queues)
-                )
-            )
-            if ips:
-                return list(dict.fromkeys(ips))
-
-    # 方式2: 直接查MySQL获取所有Worker IP
-    ips = execute_mysql_query("SELECT DISTINCT sys_dn_ipaddr FROM aio_data_nodes WHERE sys_dn_is_delete = 0")
-    if ips:
-        return list(dict.fromkeys(ips))
-
-    return []
+    return aio_common.discover_workers(MYSQL, BROKER_URL)
 
 
 # ==================== 格式化工具 ====================
@@ -407,8 +263,11 @@ else:
     print("发现Worker: {}\n".format(", ".join(ips)))
 
 results = []
-for ip in ips:
-    results.append(check_worker(ip))
+try:
+    for ip in ips:
+        results.append(check_worker(ip))
+finally:
+    cleanup_mysql_defaults_file()
 
 
 # ==================== 汇总表 ====================

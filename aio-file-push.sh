@@ -1,5 +1,7 @@
 #!/bin/bash
-# 版本: 1.0.2
+# 版本: 1.1.0
+# v1.1.0: aio.env/ENC/mysql/RPC 封装统一走 lib/common.sh；
+#         交互输入启用 readline（read -e），退格/中文编辑不再乱码
 
 if [ -z "${BASH_VERSION:-}" ]; then
     if command -v bash >/dev/null 2>&1; then
@@ -11,27 +13,26 @@ fi
 
 set -euo pipefail
 
-AIO_HOME="${AIO_HOME:-/opt/aio}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [[ ! -f "$SCRIPT_DIR/lib/common.sh" ]]; then
+    echo "ERROR: missing $SCRIPT_DIR/lib/common.sh (reinstall aio-scripts)" >&2
+    exit 1
+fi
+# shellcheck source=lib/common.sh
+source "$SCRIPT_DIR/lib/common.sh"
+
 PATCH_DIR="/opt/aio/ps_scripts/patchfiles"
 RPC_PORT="${RPC_PORT:-6611}"
 RPC_TIMEOUT="${RPC_TIMEOUT:-30}"
 RPC_UPLOAD_TIMEOUT="${RPC_UPLOAD_TIMEOUT:-7200}"
-MYSQL_BIN="/usr/local/mysql/bin/mysql"
 LOCAL_TMP_ROOT="$AIO_HOME/user_tmp"
-MYSQL_DEFAULTS_FILE=""
 EXPLICIT_WORKERS=""
 PUSH_ALL=false
 PATCH_INPUTS=()
 CURRENT_UID="$(id -u)"
 CURRENT_GID="$(id -g)"
 
-RAW_ARCH="$(uname -m)"
-RPC_BIN="${RPC_BIN:-$AIO_HOME/airflow/tools/rpc/$RAW_ARCH/rpc}"
-if [[ ! -x "$RPC_BIN" && "$RAW_ARCH" == "amd64" && -x "$AIO_HOME/airflow/tools/rpc/x86_64/rpc" ]]; then
-    RPC_BIN="$AIO_HOME/airflow/tools/rpc/x86_64/rpc"
-elif [[ ! -x "$RPC_BIN" && "$RAW_ARCH" == "arm64" && -x "$AIO_HOME/airflow/tools/rpc/aarch64/rpc" ]]; then
-    RPC_BIN="$AIO_HOME/airflow/tools/rpc/aarch64/rpc"
-fi
+RPC_BIN="${RPC_BIN:-$(aio_rpc_bin)}"
 
 usage() {
     cat <<'EOF'
@@ -54,66 +55,13 @@ Examples:
 EOF
 }
 
+# 以下均为 lib/common.sh 的薄封装，保持旧函数名兼容
 shell_quote() {
-    printf "'%s'" "$(printf "%s" "$1" | sed "s/'/'\\\\''/g")"
-}
-
-strip_quotes() {
-    local value="$1"
-    if [[ ${#value} -ge 2 ]]; then
-        if [[ "${value:0:1}" == "'" && "${value: -1}" == "'" ]] || [[ "${value:0:1}" == '"' && "${value: -1}" == '"' ]]; then
-            printf '%s\n' "${value:1:${#value}-2}"
-            return
-        fi
-    fi
-    printf '%s\n' "$value"
+    aio_shell_quote "$1"
 }
 
 trim_value() {
-    local value="$1"
-    local next
-
-    # Some jump hosts pass Backspace/DEL through to read instead of editing the line.
-    while [[ "$value" == *$'\b'* || "$value" == *$'\177'* ]]; do
-        next="$(printf '%s' "$value" | sed $'s/.[\b\177]//g;s/[\b\177]//g')"
-        [[ "$next" == "$value" ]] && break
-        value="$next"
-    done
-
-    printf '%s' "$value" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
-}
-
-read_env_value() {
-    local key="$1"
-    local file="$AIO_HOME/cfg/aio.env"
-    [[ -f "$file" ]] || return 0
-    awk -F= -v key="$key" '$1 == key {sub(/^[^=]*=/, ""); print; exit}' "$file" | while IFS= read -r value; do
-        strip_quotes "$value"
-    done
-}
-
-decrypt_password() {
-    local value="$1"
-    if [[ ! "$value" =~ ^ENC\(.*\)$ ]]; then
-        printf '%s\n' "$value"
-        return
-    fi
-
-    local enc_data="${value:4:${#value}-5}"
-    local python_bin="$AIO_HOME/cdm/bin/python3"
-    [[ -x "$python_bin" ]] || python_bin="python3"
-
-    AIO_ENC_DATA="$enc_data" "$python_bin" -c "
-import sys, base64, os
-sys.path.insert(0, '$AIO_HOME/cdm/lib/python3.6/site-packages')
-from Crypto.Cipher import AES
-from Crypto.Util.Padding import unpad
-from aio.config.key import AES_KEY_BASE_64
-key = base64.b64decode(AES_KEY_BASE_64)
-data = base64.b64decode(os.environ['AIO_ENC_DATA'])
-plain = unpad(AES.new(key, AES.MODE_CBC, IV=b'0000000000000000').decrypt(data), AES.block_size)
-sys.stdout.write(plain.decode('utf-8'))
-" 2>/dev/null || printf '%s\n' "$value"
+    aio_scrub_input "$1"
 }
 
 ensure_local_tmp() {
@@ -143,47 +91,11 @@ ensure_local_tmp() {
 }
 
 cleanup_mysql_defaults_file() {
-    if [[ -n "${MYSQL_DEFAULTS_FILE:-}" && -f "$MYSQL_DEFAULTS_FILE" ]]; then
-        rm -f "$MYSQL_DEFAULTS_FILE"
-    fi
-}
-
-create_mysql_defaults_file() {
-    ensure_local_tmp
-    local db_host db_port db_user db_password
-    db_host="$(read_env_value AIO_DB_HOSTNAME)"
-    db_port="$(read_env_value AIO_DB_PORT)"
-    db_user="$(read_env_value AIO_DB_USERNAME)"
-    db_password="$(read_env_value AIO_DB_PASSWORD)"
-    db_password="$(decrypt_password "$db_password")"
-
-    [[ -n "$db_host" ]] || db_host="127.0.0.1"
-    [[ -n "$db_port" ]] || db_port="3306"
-    [[ -n "$db_user" ]] || db_user="root"
-
-    MYSQL_DEFAULTS_FILE="$(mktemp "$LOCAL_TMP_ROOT/aio_mysql.XXXXXX.cnf")"
-    chmod 600 "$MYSQL_DEFAULTS_FILE"
-    {
-        echo "[client]"
-        echo "host=$db_host"
-        echo "port=$db_port"
-        echo "user=$db_user"
-        echo "password=$db_password"
-    } > "$MYSQL_DEFAULTS_FILE"
-}
-
-run_mysql_query() {
-    local sql="$1"
-    local db_name
-    [[ -x "$MYSQL_BIN" ]] || MYSQL_BIN="mysql"
-    create_mysql_defaults_file
-    db_name="$(read_env_value AIO_DB_NAME)"
-    [[ -n "$db_name" ]] || db_name="aio"
-    "$MYSQL_BIN" --defaults-extra-file="$MYSQL_DEFAULTS_FILE" "$db_name" -N -B -e "$sql" 2>/dev/null || true
+    aio_mysql_cleanup
 }
 
 discover_workers() {
-    run_mysql_query "SELECT DISTINCT sys_dn_ipaddr FROM aio_data_nodes WHERE sys_dn_is_delete = 0 AND sys_dn_ipaddr IS NOT NULL AND sys_dn_ipaddr <> '' ORDER BY sys_dn_ipaddr;"
+    aio_discover_workers
 }
 
 dedupe_lines() {
@@ -195,8 +107,7 @@ split_hosts() {
 }
 
 validate_host() {
-    local host="$1"
-    [[ "$host" =~ ^[A-Za-z0-9._-]+$ ]]
+    aio_valid_host "$1"
 }
 
 validate_remote_basename() {
@@ -241,7 +152,7 @@ choose_workers_interactive() {
     echo >&2
     echo "Enter worker numbers separated by comma, or 'all'." >&2
     while true; do
-        read -r -p "Select workers: " selected
+        read -rep "Select workers: " selected
         selected="$(echo "$selected" | tr -d '[:space:]')"
         [[ -n "$selected" ]] || { echo "ERROR: selection is required" >&2; continue; }
         if [[ "$selected" == "all" || "$selected" == "ALL" ]]; then
@@ -284,7 +195,7 @@ collect_target_workers() {
     fi
 
     workers="$(discover_workers || true)"
-    read -r -p "Extra worker IP/host not in MySQL, comma separated (Enter=none): " manual_workers
+    read -rep "Extra worker IP/host not in MySQL, comma separated (Enter=none): " manual_workers
     {
         printf '%s\n' "$workers"
         if [[ -n "${manual_workers:-}" ]]; then
@@ -453,7 +364,7 @@ fi
 ensure_local_tmp
 
 if (( ${#PATCH_INPUTS[@]} == 0 )); then
-    read -r -p "Local file path or glob, separated by spaces: " input_line
+    read -rep "Local file path or glob, separated by spaces: " input_line
     read -r -a PATCH_INPUTS <<< "$input_line"
 fi
 
@@ -479,7 +390,7 @@ echo
 echo "Workers:"
 printf "  %s\n" "${TARGETS[@]}"
 echo
-read -r -p "Type yes to upload these files: " confirm
+read -rep "Type yes to upload these files: " confirm
 confirm="$(trim_value "$confirm")"
 if [[ "$confirm" != "yes" ]]; then
     echo "Cancelled. No files uploaded."

@@ -1,6 +1,8 @@
 #!/bin/bash
-# 版本: 1.1.1
+# 版本: 1.2.0
 # 主机 hang / 断连 / 重启后的边界化日志收集工具
+# 本脚本会被单独上传到目标主机执行，必须保持自包含，不依赖 lib/common.sh
+# v1.2.0: 交互输入启用 readline（read -e），退格/中文编辑不再乱码
 
 set -u
 
@@ -116,7 +118,7 @@ prompt_time_range() {
 
     if [ "$interactive" -eq 1 ]; then
         while true; do
-            read -rp "从几号几点开始 [默认: ${default_start}]: " START_TIME
+            read -rep "从几号几点开始 [默认: ${default_start}]: " START_TIME
             START_TIME=${START_TIME:-$default_start}
             START_TIME=$(normalize_time "$START_TIME" || true)
             if [ -n "$START_TIME" ]; then
@@ -126,7 +128,7 @@ prompt_time_range() {
         done
 
         while true; do
-            read -rp "到几号几点结束 [默认: ${default_end}]: " END_TIME
+            read -rep "到几号几点结束 [默认: ${default_end}]: " END_TIME
             END_TIME=${END_TIME:-$default_end}
             END_TIME=$(normalize_time "$END_TIME" || true)
             if [ -n "$END_TIME" ]; then
@@ -158,7 +160,7 @@ prompt_time_range() {
     say ""
 
     if [ -z "$INCLUDE_AIO_LOGS" ]; then
-        read -rp "是否附加收集 AIO 服务日志? [y/N]: " INCLUDE_AIO_LOGS
+        read -rep "是否附加收集 AIO 服务日志? [y/N]: " INCLUDE_AIO_LOGS
         case "$INCLUDE_AIO_LOGS" in
             y|Y|yes|YES)
                 INCLUDE_AIO_LOGS=1

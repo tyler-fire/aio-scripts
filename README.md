@@ -14,7 +14,7 @@ bash aio-scripts.install
 也可以使用 Release 包：
 
 ```bash
-wget https://github.com/tyler-fire/aio-scripts/releases/download/v2.1.15/aio-scripts.install
+wget https://github.com/tyler-fire/aio-scripts/releases/download/v2.2.0/aio-scripts.install
 bash aio-scripts.install
 ```
 
@@ -29,7 +29,8 @@ bash aio-scripts.install
 | 工具 | 说明 |
 |------|------|
 | **aio-tools.sh** | 运维工具菜单（推荐使用） |
-| **aio-diagnose.py** | 任务完整分析包，产物上传到 AIO Log 分析平台 |
+| **lib/** | 公共库：`common.sh`（shell）、`aio_common.py`（python）。aio.env 解析、ENC 解密、mysql defaults-file、RPC 封装、Worker 发现、脱敏、交互输入统一在这里维护 |
+| **aio-diagnose.py** | 任务完整分析包（数据库快照与日志已脱敏），产物上传到 AIO Log 分析平台 |
 | **aio-worker-performance.py** | Worker 性能分析 |
 | **aio-collect-logs.py** | 按任务 ID 定向收集阶段日志 |
 | **aio-unlock-tasks.py** | 任务解锁工具 |
@@ -102,10 +103,30 @@ bash /opt/aio/ps_scripts/aio-collect-v.sh '10.7.16.217,10.7.16.66'
 
 ## 版本信息
 
-- 当前版本: **2.1.15**
-- 发布日期: 2026-07-13
+- 当前版本: **2.2.0**
+- 发布日期: 2026-07-27
+
+## 开发约定
+
+- 公共逻辑（aio.env 解析、ENC 解密、mysql defaults-file、RPC 封装、Worker 发现、脱敏、交互输入）一律放 `lib/`，不要在单个脚本里复制一份。
+- `aio-collect-hang-logs.sh` 和 `goldendb/` 三个清理脚本会被单独上传到远端主机执行，必须保持自包含，不允许依赖 `lib/`。
+- 交互输入统一 `read -rep`（readline，退格/中文不乱码）；Python 用 `aio_common.setup_readline()`；关键确认再叠加 `aio_scrub_input` 清理跳板机透传的 Backspace/DEL。
+- 会传出客户环境的产物（诊断包、日志包）必须经过 `aio_common.sanitize_text/sanitize_file`（与 hang-logs 的 sed 规则同源）。
+- 远端命令/SQL 中拼接主机名前必须过 `aio_valid_host` / `aio_common.valid_host`。
 
 ## 更新日志
+
+### v2.2.0 (2026-07-27)
+
+规范化重构：
+
+- 新增 `lib/common.sh` 1.0.0 + `lib/aio_common.py` 1.0.0 公共库，收敛 5+ 个脚本各自复制的 aio.env 解析、ENC 解密、mysql defaults-file、RPC 封装、Worker 发现逻辑，统一 stderr 处理（此前有的 `2>&1` 有的 `2>/dev/null`，版本号打在 stderr 会被丢掉）。
+- `aio-diagnose.py` 1.1.0（安全修复）：数据库快照（attribute JSON 可能带凭据）、任务日志、服务日志、系统日志切片全部按 hang-logs 同款规则脱敏；task_logs 内 `.gz` 解压为明文后脱敏。
+- `aio-collect-v.sh` 1.6.0：主机间按 `COLLECT_PAR`（默认 8）并行，主机内 18 条版本命令合并为一次 RPC 批量执行；实测 20 台主机（含 7 台不可达）从数分钟降到约 5 秒。
+- 交互输入退格/中文乱码修复：所有 `read` 启用 readline（`-e`），`aio-unlock-tasks.py` 的 `input()` 启用 readline。
+- `aio-worker-performance.py` 1.1.0：删除 `query_tasks()` 重复函数体死代码；Worker IP 拼 SQL/远端命令前统一校验。
+- 临时文件清理修复：`aio-unlock-tasks.py`、`check_aiopool_usage.py` 及子 shell 中创建的 mysql defaults 文件不再残留 `/tmp`。
+- 其余：`aio-collect-logs.py` 2.2.0、`aio-tools.sh` 1.3.0、`aio-file-push.sh` 1.1.0、`aio-fsdeamon-cleanup.sh` 1.5.1、`aio-collect-hang-logs.sh` 1.2.0、`goldendb_distribute_scripts.sh` 1.0.2。
 
 ### v2.1.15 (2026-07-13)
 

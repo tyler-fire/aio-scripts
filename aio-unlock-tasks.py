@@ -1,49 +1,17 @@
 #!/usr/bin/env python3
-# 版本: 1.0.0
+# 版本: 1.1.0
+# v1.1.0: aio.env/ENC/mysql 统一走 lib/aio_common；input() 启用 readline，
+#         退格/中文编辑不再乱码；退出时清理 mysql defaults 临时文件
 import os
-import subprocess
 import sys
-import tempfile
 
-AIO_HOME = "/opt/aio"
-MYSQL_BIN = "/usr/local/mysql/bin/mysql"
-DB_CONFIG = {"host": "", "port": 3306, "user": "root", "password": "", "database": "aio"}
-MYSQL_DEFAULTS_FILE = None
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(SCRIPT_DIR, "lib"))
+import aio_common
 
+aio_common.setup_readline()
 
-def strip_quotes(s):
-    """去除首尾单引号或双引号"""
-    if len(s) >= 2 and s[0] in ("'", '"') and s[-1] == s[0]:
-        return s[1:-1]
-    return s
-
-
-def decrypt_enc_password(enc_str):
-    """解密ENC格式的密码"""
-    if not enc_str.startswith("ENC(") or not enc_str.endswith(")"):
-        return enc_str
-    enc_data = enc_str[4:-1]
-    try:
-        cmd = [
-            "%s/cdm/bin/python3" % AIO_HOME, "-c",
-            "import sys, base64, os; "
-            "sys.path.insert(0, '%s/cdm/lib/python3.6/site-packages'); "
-            "from Crypto.Cipher import AES; "
-            "from Crypto.Util.Padding import unpad; "
-            "from aio.config.key import AES_KEY_BASE_64; "
-            "key = base64.b64decode(AES_KEY_BASE_64); "
-            "data = base64.b64decode(os.environ['AIO_ENC_DATA']); "
-            "decrypted = unpad(AES.new(key, AES.MODE_CBC, IV=b'0000000000000000').decrypt(data), AES.block_size); "
-            "sys.stdout.buffer.write(decrypted)" % AIO_HOME
-        ]
-        env = os.environ.copy()
-        env['AIO_ENC_DATA'] = enc_data
-        r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10, env=env)
-        if r.returncode == 0:
-            return r.stdout.decode('utf-8', errors='ignore')
-    except Exception:
-        pass
-    return enc_str
+MYSQL = None
 
 
 TABLE_SPECS = [
@@ -113,66 +81,18 @@ TABLE_MAP = dict((item["table"], item) for item in TABLE_SPECS)
 
 
 def load_config():
-    env_path = "%s/cfg/aio.env" % AIO_HOME
-    if not os.path.exists(env_path):
-        return
-
-    with open(env_path, "r") as handler:
-        for raw_line in handler:
-            line = raw_line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, value = line.split("=", 1)
-            value = strip_quotes(value.strip())
-            if key == "AIO_DB_HOSTNAME":
-                DB_CONFIG["host"] = value
-            elif key == "AIO_DB_PORT":
-                DB_CONFIG["port"] = int(value)
-            elif key == "AIO_DB_USERNAME":
-                DB_CONFIG["user"] = value
-            elif key == "AIO_DB_PASSWORD":
-                DB_CONFIG["password"] = decrypt_enc_password(value)
-            elif key == "AIO_DB_NAME":
-                DB_CONFIG["database"] = value
-
-
-def ensure_mysql_defaults_file():
-    global MYSQL_DEFAULTS_FILE
-    if MYSQL_DEFAULTS_FILE and os.path.exists(MYSQL_DEFAULTS_FILE):
-        return MYSQL_DEFAULTS_FILE
-
-    fd, path = tempfile.mkstemp(prefix="aio_unlock_", suffix=".cnf", dir="/tmp")
-    os.fchmod(fd, 0o600)
-    with os.fdopen(fd, "w") as handler:
-        handler.write("[client]\n")
-        handler.write("host=%s\n" % DB_CONFIG["host"])
-        handler.write("port=%s\n" % DB_CONFIG["port"])
-        handler.write("user=%s\n" % DB_CONFIG["user"])
-        handler.write("password=%s\n" % DB_CONFIG["password"])
-    MYSQL_DEFAULTS_FILE = path
-    return path
+    global MYSQL
+    MYSQL = aio_common.MySQL(aio_common.load_db_config(require_env=False))
 
 
 def run_mysql(sql):
-    defaults_file = ensure_mysql_defaults_file()
-    result = subprocess.run(
-        [MYSQL_BIN, "--defaults-extra-file=%s" % defaults_file, DB_CONFIG["database"], "-N", "-e", sql],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        timeout=30,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(result.stderr.decode().strip())
-    return result.stdout.decode().strip()
+    """执行 SQL；失败抛 RuntimeError（保持旧行为）"""
+    return MYSQL.execute(sql)
 
 
 def query_rows(sql, display_columns):
-    output = run_mysql(sql)
-    if not output:
-        return []
     rows = []
-    for line in output.splitlines():
-        values = line.split("\t")
+    for values in run_mysql(sql):
         row = {}
         for index, column in enumerate(display_columns):
             row[column] = values[index] if index < len(values) else ""
@@ -319,6 +239,13 @@ def apply_updates(selected):
 
 def main():
     load_config()
+    try:
+        run()
+    finally:
+        MYSQL.cleanup()
+
+
+def run():
     listed = list_running_rows()
     if not listed:
         return

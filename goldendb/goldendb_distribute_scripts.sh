@@ -1,5 +1,6 @@
 #!/bin/bash
-# 版本: 1.0.1
+# 版本: 1.0.2
+# v1.0.2: 交互输入启用 readline（read -e），退格/中文编辑不再乱码
 
 if [ -z "${BASH_VERSION:-}" ]; then
     if command -v bash >/dev/null 2>&1; then
@@ -236,7 +237,7 @@ choose_workers_interactive() {
     echo >&2
     echo "Enter worker numbers separated by comma, or 'all'." >&2
     while true; do
-        read -r -p "Select workers: " selected
+        read -rep "Select workers: " selected
         selected="$(echo "$selected" | tr -d '[:space:]')"
         [[ -n "$selected" ]] || { echo "ERROR: selection is required" >&2; continue; }
         if [[ "$selected" == "all" || "$selected" == "ALL" ]]; then
@@ -279,7 +280,7 @@ collect_target_workers() {
     fi
 
     workers="$(discover_workers || true)"
-    read -r -p "Extra worker IP/host not in MySQL, comma separated (Enter=none): " manual_workers
+    read -rep "Extra worker IP/host not in MySQL, comma separated (Enter=none): " manual_workers
     {
         printf '%s\n' "$workers"
         if [[ -n "${manual_workers:-}" ]]; then

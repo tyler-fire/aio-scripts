@@ -337,14 +337,14 @@ fi
 echo
 echo "The snapshots listed under WILL_DELETE will be destroyed."
 echo "This operation can make older backup points unrecoverable if END_DATE is wrong."
-read -r -p "Type END_DATE ${END_DATE} to continue: " confirm
+read -rep "Type END_DATE ${END_DATE} to continue: " confirm
 if [[ "$confirm" != "$END_DATE" ]]; then
     echo "Cancelled"
     exit 1
 fi
 
 if [[ "$RECURSIVE" == true ]]; then
-    read -r -p "This uses zfs destroy -R and can delete dependent clones. Type DESTROY_CLONES_YES to continue: " clone_confirm
+    read -rep "This uses zfs destroy -R and can delete dependent clones. Type DESTROY_CLONES_YES to continue: " clone_confirm
     if [[ "$clone_confirm" != "DESTROY_CLONES_YES" ]]; then
         echo "Cancelled"
         exit 1

@@ -1,27 +1,39 @@
 #!/bin/bash
-# 版本: 1.5.0
+# 版本: 1.6.0
 # AIO 工具版本收集脚本
 # 用法:
 #   ./aio-collect-v.sh              # 自动从数据库获取 Server / Worker / Agent 主机
 #   ./aio-collect-v.sh IP1 IP2 ...  # 手动指定多个主机，自动识别 Worker / Agent
 #   ./aio-collect-v.sh 'IP1,IP2'    # 也支持逗号分隔
+#
+# 环境变量:
+#   COLLECT_PAR        主机并行度，默认 8
+#   RPC_TIMEOUT        单条 RPC 超时（探测/取架构），默认 10 秒
+#   RPC_BATCH_TIMEOUT  批量版本命令 RPC 超时，默认 120 秒
+#
+# v1.6.0: 收集并行化。主机间按 COLLECT_PAR 并行；主机内全部版本命令合并为
+#         一次 RPC 批量执行（原来每主机 18 次 RPC 往返，多主机时非常慢）。
+#         aio.env/ENC/mysql/RPC 封装统一走 lib/common.sh。
 
 set -uo pipefail
 
-TOOLS_PATH="/opt/aio/airflow/tools"
-RPC_PORT="${RPC_PORT:-6611}"
-RPC_TIMEOUT="${RPC_TIMEOUT:-10}"
-AIO_ENV="/opt/aio/cfg/aio.env"
-
-if [[ -x /usr/local/mysql/bin/mysql ]]; then
-    MYSQL_BIN="/usr/local/mysql/bin/mysql"
-else
-    MYSQL_BIN="mysql"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [[ ! -f "${SCRIPT_DIR}/lib/common.sh" ]]; then
+    echo "错误: 缺少公共库 ${SCRIPT_DIR}/lib/common.sh（请重新安装 aio-scripts）" >&2
+    exit 1
 fi
+# shellcheck source=lib/common.sh
+source "${SCRIPT_DIR}/lib/common.sh"
+
+TOOLS_PATH="/opt/aio/airflow/tools"
+RPC_TIMEOUT="${RPC_TIMEOUT:-10}"
+COLLECT_PAR="${COLLECT_PAR:-8}"
+RPC_BATCH_TIMEOUT="${RPC_BATCH_TIMEOUT:-120}"
+BATCH_SEP="__AIO_VSEP__"
 
 LOCAL_ARCH=$(uname -m)
-RPC_BIN="${TOOLS_PATH}/rpc/${LOCAL_ARCH}/rpc"
-MYSQL_DEFAULTS_FILE=""
+RPC_BIN="$(aio_rpc_bin)"
+RESULT_DIR=""
 
 TOOL_NAMES=(
     "aio-oss"
@@ -94,62 +106,14 @@ skip_agent_tool() {
     return 1
 }
 
-read_env() {
-    local key="$1"
-    grep -E "^${key}=" "${AIO_ENV}" 2>/dev/null | sed "s/^${key}=//;s/['\"]//g" | tr -d '[:space:]'
-}
-
-decrypt_enc() {
-    local enc_str="$1"
-    enc_str="${enc_str#ENC(}"
-    enc_str="${enc_str%)}"
-    AIO_ENC_DATA="${enc_str}" /opt/aio/cdm/bin/python3 -c "
-import sys, base64, os
-sys.path.insert(0, '/opt/aio/cdm/lib/python3.6/site-packages')
-from Crypto.Cipher import AES
-from Crypto.Util.Padding import unpad
-from aio.config.key import AES_KEY_BASE_64
-key = base64.b64decode(AES_KEY_BASE_64)
-data = base64.b64decode(os.environ['AIO_ENC_DATA'])
-plain = unpad(AES.new(key, AES.MODE_CBC, IV=b'0000000000000000').decrypt(data), AES.block_size)
-sys.stdout.buffer.write(plain)
-" 2>/dev/null
-}
-
-read_env_value() {
-    local val
-    val=$(read_env "$1")
-    if [[ "${val}" =~ ^ENC\( ]]; then
-        decrypt_enc "${val}"
-    else
-        echo "${val}"
-    fi
-}
-
 run_sql() {
-    local db_host="$1"
-    local sql="$2"
-    local db_user db_pass db_port defaults_file
-
-    db_user=$(read_env AIO_DB_USERNAME)
-    db_pass=$(read_env_value AIO_DB_PASSWORD)
-    db_port=$(read_env AIO_DB_PORT)
-    db_port=${db_port:-3306}
-
-    defaults_file=$(mktemp /tmp/aio_collect_v_mysql.XXXXXX.cnf)
-    chmod 600 "${defaults_file}"
-    printf '[client]\nhost=%s\nport=%s\nuser=%s\npassword=%s\n' \
-        "${db_host}" "${db_port}" "${db_user}" "${db_pass}" > "${defaults_file}"
-    MYSQL_DEFAULTS_FILE="${defaults_file}"
-
-    "${MYSQL_BIN}" --defaults-extra-file="${defaults_file}" aio -N -e "${sql}" 2>/dev/null
-    rm -f "${defaults_file}"
-    MYSQL_DEFAULTS_FILE=""
+    aio_mysql_query "$1" 2>/dev/null
 }
 
-cleanup_mysql_defaults_file() {
-    if [[ -n "${MYSQL_DEFAULTS_FILE}" && -f "${MYSQL_DEFAULTS_FILE}" ]]; then
-        rm -f "${MYSQL_DEFAULTS_FILE}"
+cleanup_on_exit() {
+    aio_mysql_cleanup
+    if [[ -n "${RESULT_DIR}" && -d "${RESULT_DIR}" ]]; then
+        rm -rf "${RESULT_DIR}"
     fi
 }
 
@@ -169,10 +133,6 @@ normalize_role() {
         unknown) echo "unknown" ;;
         *) echo "agent" ;;
     esac
-}
-
-valid_host() {
-    [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]
 }
 
 add_host() {
@@ -201,39 +161,44 @@ add_host() {
     ROLES+=("${role}")
 }
 
-load_hosts_from_db() {
-    local db_host="$1"
-    local has_connector rows
+connector_roles_sql() {
+    cat <<'SQL'
+SELECT c.remote_host,
+       CASE MAX(CASE r.role
+           WHEN 'rdb' THEN 3
+           WHEN 'storage' THEN 2
+           ELSE 1
+       END)
+           WHEN 3 THEN 'server'
+           WHEN 2 THEN 'worker'
+           ELSE 'agent'
+       END
+FROM rdb_connector c
+LEFT JOIN rdb_connector_role r ON r.connector_id = c.id
+WHERE c.remote_host IS NOT NULL AND c.remote_host <> ''
+GROUP BY c.id, c.remote_host;
+SQL
+}
 
-    add_host "${db_host}" "server"
+query_db_host_roles() {
+    local has_connector
 
-    has_connector=$(run_sql "${db_host}" \
+    has_connector=$(run_sql \
         "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='rdb_connector';")
 
     if [[ "${has_connector}" == "1" ]]; then
-        rows=$(run_sql "${db_host}" \
-            "SELECT c.remote_host,
-                    CASE MAX(CASE r.role
-                        WHEN 'rdb' THEN 3
-                        WHEN 'storage' THEN 2
-                        ELSE 1
-                    END)
-                        WHEN 3 THEN 'server'
-                        WHEN 2 THEN 'worker'
-                        ELSE 'agent'
-                    END
-             FROM rdb_connector c
-             LEFT JOIN rdb_connector_role r ON r.connector_id = c.id
-             WHERE c.remote_host IS NOT NULL AND c.remote_host <> ''
-             GROUP BY c.id, c.remote_host;")
-        while IFS=$'\t' read -r host role || [[ -n "${host}" ]]; do
-            add_host "${host}" "${role}"
-        done <<< "${rows}"
-        return
+        run_sql "$(connector_roles_sql)"
+    else
+        run_sql "SELECT DISTINCT sys_dn_ipaddr, 'worker' FROM aio_data_nodes WHERE sys_dn_is_delete = 0;"
     fi
+}
 
-    rows=$(run_sql "${db_host}" \
-        "SELECT DISTINCT sys_dn_ipaddr, 'worker' FROM aio_data_nodes WHERE sys_dn_is_delete = 0;")
+load_hosts_from_db() {
+    local db_host="$1"
+    local rows
+
+    add_host "${db_host}" "server"
+    rows=$(query_db_host_roles)
     while IFS=$'\t' read -r host role || [[ -n "${host}" ]]; do
         add_host "${host}" "${role}"
     done <<< "${rows}"
@@ -241,32 +206,10 @@ load_hosts_from_db() {
 
 load_role_map_from_db() {
     local db_host="$1"
-    local has_connector rows host role
+    local rows host role
 
     DB_ROLES["${db_host}"]="server"
-    has_connector=$(run_sql "${db_host}" \
-        "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='rdb_connector';" || true)
-
-    if [[ "${has_connector}" == "1" ]]; then
-        rows=$(run_sql "${db_host}" \
-            "SELECT c.remote_host,
-                    CASE MAX(CASE r.role
-                        WHEN 'rdb' THEN 3
-                        WHEN 'storage' THEN 2
-                        ELSE 1
-                    END)
-                        WHEN 3 THEN 'server'
-                        WHEN 2 THEN 'worker'
-                        ELSE 'agent'
-                    END
-             FROM rdb_connector c
-             LEFT JOIN rdb_connector_role r ON r.connector_id = c.id
-             WHERE c.remote_host IS NOT NULL AND c.remote_host <> ''
-             GROUP BY c.id, c.remote_host;" || true)
-    else
-        rows=$(run_sql "${db_host}" \
-            "SELECT DISTINCT sys_dn_ipaddr, 'worker' FROM aio_data_nodes WHERE sys_dn_is_delete = 0;" || true)
-    fi
+    rows=$(query_db_host_roles || true)
 
     while IFS=$'\t' read -r host role || [[ -n "${host}" ]]; do
         host=$(echo "${host}" | tr -d '[:space:]')
@@ -278,7 +221,8 @@ load_role_map_from_db() {
 rpc_exec() {
     local host="$1"
     local cmd="$2"
-    timeout "${RPC_TIMEOUT}" "${RPC_BIN}" -h "${host}" -p "${RPC_PORT}" -c "${cmd}" 2>&1
+    local run_timeout="${3:-${RPC_TIMEOUT}}"
+    timeout "${run_timeout}" "${RPC_BIN}" -h "${host}" -p "${AIO_RPC_PORT}" -c "${cmd}" 2>&1
 }
 
 probe_rpc() {
@@ -322,7 +266,7 @@ add_manual_hosts() {
     for input in "$@"; do
         input=${input//,/ }
         for host in ${input}; do
-            if ! valid_host "${host}"; then
+            if ! aio_valid_host "${host}"; then
                 echo "警告: 忽略无效主机: ${host}" >&2
                 continue
             fi
@@ -330,11 +274,6 @@ add_manual_hosts() {
             add_host "${host}" "${role}"
         done
     done
-}
-
-local_exec() {
-    local cmd="$1"
-    eval "${cmd}" 2>&1
 }
 
 get_arch() {
@@ -364,22 +303,123 @@ clean_version() {
     fi
 }
 
-get_version() {
+# 把该主机需要执行的全部版本命令拼成一个批量脚本，段与段之间用 BATCH_SEP 分隔。
+# 被跳过的工具输出 __SKIP__ 占位，保证段序号与 TOOL_NAMES 下标一一对应。
+build_batch_script() {
+    local role="$1"
+    local arch="$2"
+    local tool_idx cmd script=""
+
+    for tool_idx in "${!TOOL_NAMES[@]}"; do
+        if [[ "${role}" == "agent" ]] && skip_agent_tool "${TOOL_NAMES[$tool_idx]}"; then
+            script+="echo __SKIP__; echo ${BATCH_SEP}; "
+            continue
+        fi
+        cmd="${TOOL_CMDS[$tool_idx]//\{arch\}/${arch}}"
+        script+="( ${cmd} ) 2>&1; echo ${BATCH_SEP}; "
+    done
+    printf '%s' "${script}"
+}
+
+# 解析批量输出，按段落顺序输出 "TOOL\t工具名\t版本" 行
+parse_batch_output() {
+    local output="$1"
+    local tool_idx=0
+    local section=""
+    local line
+
+    while IFS= read -r line; do
+        if [[ "${line}" == "${BATCH_SEP}" ]]; then
+            if [[ "${tool_idx}" -lt "${#TOOL_NAMES[@]}" && "${section}" != __SKIP__* ]]; then
+                printf 'TOOL\t%s\t%s\n' "${TOOL_NAMES[$tool_idx]}" "$(clean_version "${section}")"
+            fi
+            tool_idx=$((tool_idx + 1))
+            section=""
+        else
+            section+="${line}"$'\n'
+        fi
+    done <<< "${output}"
+}
+
+# 收集单个主机的全部版本信息，结果写入独立文件（在后台子进程中运行，
+# 不能修改父进程的关联数组）
+collect_host() {
     local host="$1"
     local role="$2"
-    local cmd_template="$3"
-    local arch="$4"
-    local cmd output
+    local outfile="$3"
+    local arch probe_output batch output rc
+    local is_local_server=false
 
-    cmd="${cmd_template//\{arch\}/${arch}}"
-
-    if [[ "${host}" == "${LOCAL_IP}" && "${role}" == "server" ]]; then
-        output=$(local_exec "${cmd}" || true)
-    else
-        output=$(rpc_exec "${host}" "${cmd}" || true)
+    if [[ "${role}" == "unknown" && -n "${ROLE_PROBE_ERRORS[${host}]:-}" ]]; then
+        printf 'STATUS\tRPC 不可达: %s\n' "${ROLE_PROBE_ERRORS[${host}]}" > "${outfile}"
+        return
     fi
 
-    clean_version "${output}"
+    [[ "${host}" == "${LOCAL_IP}" && "${role}" == "server" ]] && is_local_server=true
+
+    if [[ "${is_local_server}" == false ]]; then
+        if ! probe_output=$(probe_rpc "${host}" 2>&1); then
+            printf 'STATUS\tRPC 不可达: %s\n' "$(echo "${probe_output}" | head -1)" > "${outfile}"
+            return
+        fi
+    fi
+
+    arch=$(get_arch "${host}" "${role}")
+    batch=$(build_batch_script "${role}" "${arch}")
+
+    if [[ "${is_local_server}" == true ]]; then
+        output=$(bash -c "${batch}" 2>&1)
+        rc=0
+    else
+        output=$(rpc_exec "${host}" "${batch}" "${RPC_BATCH_TIMEOUT}")
+        rc=$?
+    fi
+
+    if [[ "${rc}" -ne 0 && -z "${output}" ]]; then
+        printf 'STATUS\t批量执行失败或超时\n' > "${outfile}"
+        return
+    fi
+
+    {
+        printf 'STATUS\tok\n'
+        printf 'ARCH\t%s\n' "${arch}"
+        parse_batch_output "${output}"
+    } > "${outfile}"
+}
+
+collect_versions() {
+    local idx host role outfile kind a b
+
+    RESULT_DIR=$(mktemp -d /tmp/aio_collect_v.XXXXXX)
+
+    for idx in "${!HOSTS[@]}"; do
+        host="${HOSTS[$idx]}"
+        role="${ROLES[$idx]}"
+        outfile="${RESULT_DIR}/${idx}.result"
+        # 并行度限流：同时最多 COLLECT_PAR 个主机在收集
+        while [[ $(jobs -rp | wc -l) -ge ${COLLECT_PAR} ]]; do
+            sleep 0.2
+        done
+        collect_host "${host}" "${role}" "${outfile}" &
+    done
+    wait
+
+    for idx in "${!HOSTS[@]}"; do
+        host="${HOSTS[$idx]}"
+        outfile="${RESULT_DIR}/${idx}.result"
+        STATUS["${host}"]="RPC 不可达"
+        [[ -f "${outfile}" ]] || continue
+        while IFS=$'\t' read -r kind a b; do
+            case "${kind}" in
+                STATUS) STATUS["${host}"]="${a}" ;;
+                ARCH)   ARCHS["${host}"]="${a}" ;;
+                TOOL)   VERSIONS["${host}|${a}"]="${b}" ;;
+            esac
+        done < "${outfile}"
+    done
+
+    rm -rf "${RESULT_DIR}"
+    RESULT_DIR=""
 }
 
 show_host_list() {
@@ -422,39 +462,6 @@ has_role() {
         [[ "${ROLES[$idx]}" == "${role}" ]] && return 0
     done
     return 1
-}
-
-collect_versions() {
-    local idx tool_idx host role arch version probe_output
-
-    for idx in "${!HOSTS[@]}"; do
-        host="${HOSTS[$idx]}"
-        role="${ROLES[$idx]}"
-        STATUS["${host}"]="ok"
-
-        if [[ "${role}" == "unknown" && -n "${ROLE_PROBE_ERRORS[${host}]:-}" ]]; then
-            STATUS["${host}"]="RPC 不可达: ${ROLE_PROBE_ERRORS[${host}]}"
-            continue
-        fi
-
-        if [[ "${host}" != "${LOCAL_IP}" || "${role}" != "server" ]]; then
-            if ! probe_output=$(probe_rpc "${host}" 2>&1); then
-                STATUS["${host}"]="RPC 不可达: $(echo "${probe_output}" | head -1)"
-                continue
-            fi
-        fi
-
-        arch=$(get_arch "${host}" "${role}")
-        ARCHS["${host}"]="${arch}"
-
-        for tool_idx in "${!TOOL_NAMES[@]}"; do
-            if [[ "${role}" == "agent" ]] && skip_agent_tool "${TOOL_NAMES[$tool_idx]}"; then
-                continue
-            fi
-            version=$(get_version "${host}" "${role}" "${TOOL_CMDS[$tool_idx]}" "${arch}")
-            VERSIONS["${host}|${TOOL_NAMES[$tool_idx]}"]="${version}"
-        done
-    done
 }
 
 print_core_table() {
@@ -602,26 +609,23 @@ print_agent_summary() {
 }
 
 main() {
-    trap cleanup_mysql_defaults_file EXIT
+    trap cleanup_on_exit EXIT
 
     if [[ ! -f "${RPC_BIN}" ]]; then
         echo "错误: RPC 工具不存在 ${RPC_BIN}"
         exit 1
     fi
 
-    LOCAL_IP=$(read_env AIO_WEBSRV_HOST)
+    LOCAL_IP=$(aio_env_get AIO_WEBSRV_HOST)
+
+    if [[ -z "${LOCAL_IP}" ]]; then
+        echo "错误: 无法从 ${AIO_ENV_FILE} 读取 AIO_WEBSRV_HOST"
+        exit 1
+    fi
 
     if [[ $# -gt 0 ]]; then
-        if [[ -z "${LOCAL_IP}" ]]; then
-            echo "错误: 无法从 ${AIO_ENV} 读取 AIO_WEBSRV_HOST"
-            exit 1
-        fi
         add_manual_hosts "${LOCAL_IP}" "$@"
     else
-        if [[ -z "${LOCAL_IP}" ]]; then
-            echo "错误: 无法从 ${AIO_ENV} 读取 AIO_WEBSRV_HOST"
-            exit 1
-        fi
         load_hosts_from_db "${LOCAL_IP}"
     fi
 
@@ -630,7 +634,7 @@ main() {
         exit 1
     fi
 
-    echo "正在收集版本信息..."
+    echo "正在收集版本信息（并行度 ${COLLECT_PAR}）..."
     echo ""
     echo "主机清单"
     show_host_list "server" "Server"

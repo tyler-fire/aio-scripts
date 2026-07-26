@@ -301,7 +301,7 @@ echo
 echo "This will delete $total_files files under the matched GoldenDB log mountpoints."
 echo "This operation can make older backup points unrecoverable if END_DATE is wrong."
 echo "After deleting files, fstrim will run on mountpoints that actually had files deleted."
-read -r -p "Type END_DATE ${END_DATE} to continue: " confirm
+read -rep "Type END_DATE ${END_DATE} to continue: " confirm
 if [[ "$confirm" != "$END_DATE" ]]; then
     echo "Cancelled"
     exit 1

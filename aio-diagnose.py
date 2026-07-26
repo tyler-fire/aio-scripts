@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
-# 版本: 1.0.3
+# 版本: 1.1.0
 """
 AIO 任务完整分析包工具
 
@@ -22,7 +22,7 @@ AIO 任务完整分析包工具
   /tmp/aio_diagnosis/task_<id>_diagnosis_<timestamp>.tar.gz
 """
 
-VERSION = "1.0.3"
+VERSION = "1.1.0"
 
 import os
 import sys
@@ -31,12 +31,14 @@ import gzip
 import re
 import subprocess
 import datetime
-import tempfile
 import tarfile
 import shutil
 
-AIO_HOME = "/opt/aio"
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(SCRIPT_DIR, "lib"))
+import aio_common
+
+AIO_HOME = aio_common.AIO_HOME
 OUTPUT_BASE = "/tmp/aio_diagnosis"
 
 ACTIVE_TASK_STATUSES = {
@@ -56,123 +58,31 @@ SYSTEM_LOG_KEYWORDS = [
 SYSTEM_LOG_KEYWORDS_LOWER = [k.lower() for k in SYSTEM_LOG_KEYWORDS]
 MAX_LOG_LINES_PER_FILE = 3000
 
-DB_CONFIG = {"host": None, "port": None, "user": None, "password": None, "database": None}
-MYSQL_DEFAULTS_FILE = None
-
-
-def strip_quotes(s):
-    if len(s) >= 2 and s[0] in ("'", '"') and s[-1] == s[0]:
-        return s[1:-1]
-    return s
-
-
-def decrypt_enc_password(enc_str):
-    """解密ENC格式的密码"""
-    if not enc_str.startswith("ENC(") or not enc_str.endswith(")"):
-        return enc_str
-    enc_data = enc_str[4:-1]
-    try:
-        cmd = [
-            "{}/cdm/bin/python3".format(AIO_HOME), "-c",
-            "import sys, base64, os; "
-            "sys.path.insert(0, '{}/cdm/lib/python3.6/site-packages'); "
-            "from Crypto.Cipher import AES; "
-            "from Crypto.Util.Padding import unpad; "
-            "from aio.config.key import AES_KEY_BASE_64; "
-            "key = base64.b64decode(AES_KEY_BASE_64); "
-            "data = base64.b64decode(os.environ['AIO_ENC_DATA']); "
-            "decrypted = unpad(AES.new(key, AES.MODE_CBC, IV=b'0000000000000000').decrypt(data), AES.block_size); "
-            "sys.stdout.buffer.write(decrypted)".format(AIO_HOME)
-        ]
-        env = os.environ.copy()
-        env['AIO_ENC_DATA'] = enc_data
-        r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10, env=env)
-        if r.returncode == 0:
-            return r.stdout.decode('utf-8', errors='ignore')
-    except Exception:
-        pass
-    return enc_str
+MYSQL = None
 
 
 def load_config():
-    env_file = "{}/cfg/aio.env".format(AIO_HOME)
-    if not os.path.exists(env_file):
-        print("[ERROR] 配置文件不存在: {}".format(env_file))
-        sys.exit(1)
-
-    with open(env_file, 'r') as f:
-        for line in f:
-            line = line.strip()
-            if line and not line.startswith('#') and '=' in line:
-                key, value = line.split('=', 1)
-                key = key.strip()
-                value = strip_quotes(value.strip())
-                if key == "AIO_DB_HOSTNAME":
-                    DB_CONFIG["host"] = value
-                elif key == "AIO_DB_PORT":
-                    DB_CONFIG["port"] = int(value) if value else None
-                elif key == "AIO_DB_USERNAME":
-                    DB_CONFIG["user"] = value
-                elif key == "AIO_DB_PASSWORD":
-                    DB_CONFIG["password"] = decrypt_enc_password(value)
-                elif key == "AIO_DB_NAME":
-                    DB_CONFIG["database"] = value
-
-    if not DB_CONFIG["host"]:
-        DB_CONFIG["host"] = "127.0.0.1"
-    if not DB_CONFIG["port"]:
-        DB_CONFIG["port"] = 3306
-    if not DB_CONFIG["user"]:
-        DB_CONFIG["user"] = "root"
-    if not DB_CONFIG["database"]:
-        DB_CONFIG["database"] = "aio"
-
-
-def get_mysql_defaults_file():
-    global MYSQL_DEFAULTS_FILE
-    if MYSQL_DEFAULTS_FILE and os.path.exists(MYSQL_DEFAULTS_FILE):
-        return MYSQL_DEFAULTS_FILE
-
-    if not DB_CONFIG["password"]:
+    global MYSQL
+    db_config = aio_common.load_db_config()
+    if not db_config["password"]:
         print("[ERROR] 数据库密码未配置")
         sys.exit(1)
-
-    fd, path = tempfile.mkstemp(prefix="aio_mysql_", suffix=".cnf", dir="/tmp")
-    os.fchmod(fd, 0o600)
-    with os.fdopen(fd, 'w') as f:
-        f.write("[client]\n")
-        f.write("host={}\n".format(DB_CONFIG["host"]))
-        f.write("port={}\n".format(DB_CONFIG["port"]))
-        f.write("user={}\n".format(DB_CONFIG["user"]))
-        f.write("password={}\n".format(DB_CONFIG["password"]))
-    MYSQL_DEFAULTS_FILE = path
-    return MYSQL_DEFAULTS_FILE
+    MYSQL = aio_common.MySQL(db_config)
 
 
 def cleanup_mysql_defaults_file():
-    global MYSQL_DEFAULTS_FILE
-    if MYSQL_DEFAULTS_FILE and os.path.exists(MYSQL_DEFAULTS_FILE):
-        os.remove(MYSQL_DEFAULTS_FILE)
-    MYSQL_DEFAULTS_FILE = None
+    if MYSQL is not None:
+        MYSQL.cleanup()
 
 
 def execute_mysql_query(sql):
-    defaults_file = get_mysql_defaults_file()
-    cmd = [
-        "/usr/local/mysql/bin/mysql",
-        "--defaults-extra-file={}".format(defaults_file),
-        DB_CONFIG["database"], "-N", "-e", sql
-    ]
-    try:
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
-        if result.returncode != 0:
-            return []
-        output = result.stdout.decode().strip()
-        if not output:
-            return []
-        return [line.split('\t') for line in output.split('\n') if line]
-    except Exception:
-        return []
+    return MYSQL.query(sql)
+
+
+def sanitize_rows(rows):
+    """对数据库导出的每个字段做脱敏（attribute JSON 里可能带凭据）"""
+    return [[aio_common.sanitize_text(cell) if isinstance(cell, str) else cell
+             for cell in row] for row in rows]
 
 
 def line_has_keyword(line):
@@ -349,26 +259,28 @@ class TaskDiagnostic:
         db_dir = os.path.join(self.output_dir, "database")
         os.makedirs(db_dir, exist_ok=True)
 
+        # 整行导出前统一脱敏：attribute JSON 里可能带数据库/OS 凭据，
+        # 分析包要传出客户环境，绝不能带明文密码
         # aio_total_task
         sql = "SELECT * FROM aio_total_task WHERE id = {}".format(self.task_id)
-        results = execute_mysql_query(sql)
+        results = sanitize_rows(execute_mysql_query(sql))
         with open(os.path.join(db_dir, "aio_total_task.json"), 'w') as f:
             json.dump(results, f, indent=2, default=str)
-        print("  ✓ aio_total_task")
+        print("  ✓ aio_total_task（已脱敏）")
 
         # aio_sub_task
         sql = "SELECT * FROM aio_sub_task WHERE total_task_id = {} ORDER BY id".format(self.task_id)
-        results = execute_mysql_query(sql)
+        results = sanitize_rows(execute_mysql_query(sql))
         with open(os.path.join(db_dir, "aio_sub_task.json"), 'w') as f:
             json.dump(results, f, indent=2, default=str)
-        print("  ✓ aio_sub_task ({} 条)".format(len(results)))
+        print("  ✓ aio_sub_task ({} 条，已脱敏)".format(len(results)))
 
         # aio_log_detail
         sql = "SELECT * FROM aio_log_detail WHERE task_id = '{}' ORDER BY create_time".format(self.task_id)
-        results = execute_mysql_query(sql)
+        results = sanitize_rows(execute_mysql_query(sql))
         with open(os.path.join(db_dir, "aio_log_detail.json"), 'w') as f:
             json.dump(results, f, indent=2, default=str)
-        print("  ✓ aio_log_detail ({} 条)".format(len(results)))
+        print("  ✓ aio_log_detail ({} 条，已脱敏)".format(len(results)))
 
     def collect_task_logs(self):
         """调用 aio-collect-logs.py 收集任务日志"""
@@ -396,14 +308,35 @@ class TaskDiagnostic:
                     tar_path = line.split()[-1]
                     if os.path.exists(tar_path):
                         # 解压到诊断目录
-                        import tarfile
+                        task_logs_dir = os.path.join(self.output_dir, "task_logs")
                         with tarfile.open(tar_path, 'r:gz') as tar:
-                            tar.extractall(os.path.join(self.output_dir, "task_logs"))
-                        print("  ✓ 任务日志已收集")
+                            tar.extractall(task_logs_dir)
+                        sanitized = self.sanitize_task_logs(task_logs_dir)
+                        print("  ✓ 任务日志已收集（{} 个文件已脱敏）".format(sanitized))
                         return
             print("  ⚠ 日志收集完成但未找到打包文件")
         except Exception as e:
             print("  ✗ 日志收集失败: {}".format(e))
+
+    @staticmethod
+    def sanitize_task_logs(task_logs_dir):
+        """任务日志脱敏；.gz 先解压成同名明文再脱敏（外层整体还会再打包压缩）"""
+        count = 0
+        for root, _, files in os.walk(task_logs_dir):
+            for name in files:
+                path = os.path.join(root, name)
+                if name.endswith(".gz"):
+                    plain = path[:-3]
+                    try:
+                        with gzip.open(path, "rb") as src, open(plain, "wb") as dst:
+                            shutil.copyfileobj(src, dst)
+                        os.remove(path)
+                        path = plain
+                    except (IOError, OSError):
+                        continue
+                aio_common.sanitize_file(path)
+                count += 1
+        return count
 
     def collect_service_logs(self):
         """收集服务日志（时间窗口）"""
@@ -433,6 +366,7 @@ class TaskDiagnostic:
             output_file = os.path.join(service_dir, output_log_name(log_path, service_root))
             count = filter_log_file_by_window(log_path, output_file, self.time_window)
             if count > 0 and os.path.exists(output_file) and os.path.getsize(output_file) > 0:
+                aio_common.sanitize_file(output_file)
                 collected += 1
                 print("  ✓ {} ({} 行, {:.1f} KB)".format(
                     os.path.relpath(log_path, service_root), count, os.path.getsize(output_file)/1024
@@ -466,6 +400,7 @@ class TaskDiagnostic:
             result = subprocess.run(cmd, shell=True, timeout=60)
             journal_file = os.path.join(system_dir, "journal.log")
             if os.path.exists(journal_file) and os.path.getsize(journal_file) > 0:
+                aio_common.sanitize_file(journal_file)
                 print("  ✓ journal.log ({:.1f} KB)".format(os.path.getsize(journal_file)/1024))
             else:
                 os.remove(journal_file) if os.path.exists(journal_file) else None
@@ -478,6 +413,7 @@ class TaskDiagnostic:
                 msg_file = os.path.join(system_dir, "messages.log")
                 count = filter_log_file_by_window("/var/log/messages", msg_file, self.time_window, keyword_only=True)
                 if count > 0 and os.path.exists(msg_file) and os.path.getsize(msg_file) > 0:
+                    aio_common.sanitize_file(msg_file)
                     print("  ✓ messages.log ({} 行, {:.1f} KB)".format(count, os.path.getsize(msg_file)/1024))
                 else:
                     os.remove(msg_file) if os.path.exists(msg_file) else None
@@ -518,6 +454,10 @@ class TaskDiagnostic:
             f.write("   - service_logs/\n\n")
             f.write("4. 系统日志（时间窗口+关键词过滤）\n")
             f.write("   - system_logs/\n\n")
+            f.write("脱敏说明:\n")
+            f.write("  数据库快照和所有文本日志已对 password、token、secret、authorization、\n")
+            f.write("  access key、URL 内嵌凭据等常见敏感字段做基础脱敏（{}）。\n".format(aio_common.REDACTED))
+            f.write("  task_logs 内的 .gz 日志已解压为明文后脱敏，包体积由外层 tar.gz 统一压缩。\n\n")
             f.write("=" * 70 + "\n")
             f.write("使用说明\n")
             f.write("=" * 70 + "\n\n")

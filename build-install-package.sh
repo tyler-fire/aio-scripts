@@ -4,7 +4,7 @@
 
 set -e
 
-VERSION="2.1.15"
+VERSION="2.2.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUTPUT_FILE="$SCRIPT_DIR/aio-scripts.install"
 OUTPUT_TMP="$OUTPUT_FILE.tmp.$$"
@@ -42,6 +42,7 @@ CORE_TOOLS=(
     "aio-collect-hang-logs.sh"
     "check_aiopool_usage.py"
     "aio-file-push.sh"
+    "lib"
     "docs"
     "goldendb"
     "license.sh"
@@ -173,6 +174,7 @@ CORE_TOOLS=(
     "aio-collect-hang-logs.sh"
     "check_aiopool_usage.py"
     "aio-file-push.sh"
+    "lib"
     "docs"
     "goldendb"
     "license.sh"
@@ -271,7 +273,7 @@ echo ""
 
 # 是否发布到 GitHub Release
 echo "----------------------------------------"
-read -rp "是否发布到 GitHub Release? [y/N]: " publish
+read -rep "是否发布到 GitHub Release? [y/N]: " publish
 if [[ "$publish" =~ ^[Yy]$ ]]; then
     if [ -z "$GITHUB_TOKEN" ]; then
         echo ""
@@ -303,30 +305,14 @@ if [[ "$publish" =~ ^[Yy]$ ]]; then
 
     # 2. 创建新 Release
     echo "  创建新 Release v${VERSION}..."
-RELEASE_BODY="## 本次更新
+RELEASE_BODY="## 本次更新（v2.2.0 规范化重构）
 
-- **多主机版本收集** - 菜单 6 支持一次输入多个 IP，逗号或空格分隔；直接回车仍自动收集数据库中的全部主机。
-- **Worker / Agent 自动识别** - 手工输入的 IP 优先使用 MySQL 角色，未登记主机再通过 RPC 检查远端 AIO 目录；无法连接的主机显示为 Unknown，不再误报为 Agent。
-- **任务完整分析包定位** - 菜单 2 从“任务诊断”改为“任务完整分析包”，明确生成的整体 tar.gz 用于上传到 AIO Log 分析平台分析。
-- **主机异常日志远端路径** - 菜单 12 通过 RPC 上传收集脚本时，统一使用 Worker 的 \`/opt/aio/user_tmp\`，不再把可执行脚本放到 \`/tmp\`。
-- **远端目录与清理** - 工具会先通过 RPC 创建并限制 \`/opt/aio/user_tmp\` 权限，上传或执行失败时清理残留脚本。
-- **远端脚本防替换** - 执行前校验本地与远端脚本 SHA-256，并通过已打开的文件描述符执行同一内容，降低普通用户替换脚本的竞态风险。
-- **aio-diagnose.py 结束时间修复** - 已结束任务的 \`end_time\` 为空时使用 \`update_time\`，不再错误收集到当前时间的全部服务日志。
-- **aio-diagnose.py 路径修复** - 日志收集器固定从当前 \`/opt/aio/ps_scripts\` 目录调用，不再依赖旧目录。
-- **aio-diagnose.py 重跑修复** - 每次诊断前清理该任务未完成的临时目录，避免旧日志混入新诊断包。
-- **安装目录调整** - 安装目标改为 \`/opt/aio/ps_scripts\`，不再依赖 \`/opt/aio/scripts\`。
-- **安装权限修正** - 安装包会自动准备 \`/opt/aio/ps_scripts\` 和 \`/opt/aio/user_tmp\`；当前用户权限不足时，尝试通过本机 RPC 创建并授权。
-- **GoldenDB 脚本分发** - \`aio-tools.sh\` 新增 \`GoldenDB脚本分发\`，通过 RPC 将 3 个本地清理脚本复制到 Worker 的 \`/opt/aio/ps_scripts/goldendb/\`。
-- **分发安全边界** - GoldenDB 分发只上传脚本并校验 \`sha256sum\`，不远程执行快照或日志清理。
-- **GoldenDB 清理脚本修正** - snapshot 清理拒绝未来日期，执行确认改为输入 \`END_DATE\`；log 清理日期语义统一为 \`<= END_DATE 23:59:59\`。
-- **GoldenDB 普通用户执行** - snapshot/log 脚本在普通用户执行 \`-x\` 时，确认后通过本机 RPC 执行 root 删除动作，解决 \`zfs destroy\` 或文件删除权限不足。
-- **RPC 平台兼容** - RPC 路径优先使用 \`uname -m\` 原始值，找不到时再兼容 \`amd64 -> x86_64\` 和 \`arm64 -> aarch64\`。
-- **GoldenDB 日志清理自动 trim** - log/gtmlog 文件删除后，对本次实际清理过的挂载点执行 \`fstrim -v\`，让 zpool 尽快回收 zvol 空闲块。
-- **File 推送工具** - \`aio-tools.sh\` 新增 \`File推送\`，支持本机文件路径和通配符，通过 RPC 上传到 Worker 的 \`/opt/aio/ps_scripts/patchfiles/\`，同名覆盖并校验 \`sha256sum\`。
-- **File 推送命名调整** - \`aio-patch-push.sh\` 更名为 \`aio-file-push.sh\`，菜单入口统一显示为 \`File推送\`。
-- **File 推送确认修正** - 上传确认输入会清理首尾空格和回车符，避免输入 \`yes\` 后被误判为取消。
-- **File 推送退格兼容** - 上传确认输入会处理 Backspace/DEL 控制字符，兼容跳板机或终端把退格原样传给脚本的情况。
-- **日志分析平台入口更新** - 统一使用 \`/opt/aio/ps_scripts/aio-tools.sh\` 作为运维/日志分析工具入口。
+- **新增公共库 lib/** - \`lib/common.sh\` + \`lib/aio_common.py\`。aio.env 解析、ENC 密码解密、mysql defaults-file、RPC 封装、Worker 发现此前在 5+ 个脚本里各写一份且行为不一致（stderr 有的合并有的丢弃），现统一收敛，一处修改处处生效。
+- **aio-diagnose.py 全面脱敏（安全修复）** - 数据库快照（\`SELECT *\` 的 attribute JSON 可能带凭据）、任务日志、服务日志、系统日志切片统一按 hang-logs 同款规则脱敏（password/token/secret/authorization/access key/URL 内嵌凭据）；task_logs 内 .gz 解压为明文后脱敏。分析包传出客户环境前不再携带明文凭据。
+- **aio-collect-v.sh 并行化** - 主机间按 \`COLLECT_PAR\`（默认 8）并行；主机内 18 条版本命令合并为一次 RPC 批量执行。20 台主机场景从数分钟级降到十秒级。
+- **交互输入退格乱码修复** - 全部交互 \`read\` 启用 readline（\`-e\`），Python \`input()\` 启用 readline；退格、中文编辑不再乱码。关键确认输入仍保留跳板机 Backspace/DEL 透传清理。
+- **aio-worker-performance.py 修复** - 删除 \`query_tasks()\` 重复函数体死代码；Worker IP 拼 SQL/远端命令前统一格式校验。
+- **临时文件清理修复** - unlock-tasks / check_aiopool / 子 shell 中的 mysql defaults 临时文件不再残留 /tmp。
 
 ## 📦 安装方式
 
@@ -340,40 +326,34 @@ bash /opt/aio/ps_scripts/aio-tools.sh
 
 ## 包含工具
 
+- lib/ - 公共库（common.sh / aio_common.py）
 - aio-tools.sh - 运维工具菜单
-- aio-diagnose.py - 任务完整分析包
-- aio-worker-performance.py - Worker 性能分析（新增自动发现）
-- aio-collect-logs.py - 日志收集（新增子任务过滤）
+- aio-diagnose.py - 任务完整分析包（已脱敏）
+- aio-worker-performance.py - Worker 性能分析
+- aio-collect-logs.py - 日志收集
 - aio-unlock-tasks.py - 任务解锁
 - aio-fsdeamon-cleanup.sh - fsdeamon 清理
 - aio-collect-hang-logs.sh - 主机异常日志收集
 - aio-file-push.sh - 文件 RPC 推送
 - check_aiopool_usage.py - aiopool 空间检查
-- aio-collect-v.sh - 版本信息收集
+- aio-collect-v.sh - 版本信息收集（并行）
 - goldendb/ - GoldenDB 本地清理脚本与分发工具
-- ops - 文件加解密工具
+- ops / ops_arm - 文件加解密工具
 
 ## 📝 更新日志
 
-- aio-tools.sh 1.2.8: 菜单 6 支持一次输入多个 Worker / Agent IP
-- aio-collect-v.sh 1.5.0: 支持逗号或空格分隔的多主机版本收集，并自动识别 Server / Worker / Agent
-- aio-tools.sh 1.2.6: 菜单 2 改为任务完整分析包；菜单 12 远端脚本使用 /opt/aio/user_tmp
-- aio-diagnose.py 1.0.3: 明确整体包用于上传到 AIO Log 分析平台分析
-- aio-collect-hang-logs.sh 1.1.1: 配合新的远端脚本落盘与清理流程
-- aio-diagnose.py 1.0.2: 修复空 end_time、旧收集器路径和重跑残留问题
-- aio-tools.sh 1.2.5: File 推送入口命名调整
-- aio-tools.sh 1.2.4: 新增 File 推送入口
-- aio-file-push.sh: 由 aio-patch-push.sh 更名，菜单入口统一为 File推送
-- aio-file-push.sh 1.0.2: 上传确认输入兼容 Backspace/DEL 控制字符
-- aio-file-push.sh 1.0.1: 修正确认输入带空格或回车符时被误判取消的问题
-- aio-file-push.sh 1.0.0: 支持单文件和通配符，通过 RPC 上传到 Worker 的 /opt/aio/ps_scripts/patchfiles/，同名覆盖并校验 sha256sum
-- aio-tools.sh 1.2.3: 新增 GoldenDB 脚本分发入口
-- goldendb_distribute_scripts.sh 1.0.1: 分发 3 个 GoldenDB 本地脚本到 Worker；本机临时目录权限不足时使用本机 RPC 修正
-- goldendb_snapshot_clean.sh: 增加未来日期保护，执行确认改为输入 END_DATE；普通用户执行删除时通过本机 RPC 执行 zfs destroy
-- goldendb_log_clean.sh: 清理日期统一到 END_DATE 当天 23:59:59；普通用户执行删除时通过本机 RPC 删除文件；删除后自动 fstrim 已清理挂载点
-- RPC 路径: 优先使用 uname -m 原始值，找不到时再做 amd64/arm64 fallback，避免改变已有 aarch64 ARM Worker 行为
-- 安装包: 安装目录调整为 /opt/aio/ps_scripts
-- 安装包: 创建 /opt/aio/ps_scripts 或 /opt/aio/user_tmp 权限不足时，使用本机 RPC fallback 授权"
+- lib/common.sh 1.0.0 / lib/aio_common.py 1.0.0: 新增公共库
+- aio-diagnose.py 1.1.0: 数据库快照与全部文本日志脱敏；接入公共库
+- aio-collect-v.sh 1.6.0: 主机并行 + RPC 批量执行；接入公共库
+- aio-worker-performance.py 1.1.0: 删除死代码；IP 校验；接入公共库
+- aio-collect-logs.py 2.2.0: 接入公共库；RPC 路径支持 amd64/arm64 fallback
+- aio-unlock-tasks.py 1.1.0: input() 启用 readline；接入公共库；清理临时文件
+- check_aiopool_usage.py 1.2.0: 接入公共库；退出清理临时文件
+- aio-tools.sh 1.3.0: 全部交互输入启用 readline；接入公共库
+- aio-file-push.sh 1.1.0: 接入公共库；交互输入启用 readline
+- aio-fsdeamon-cleanup.sh 1.5.1: 交互输入启用 readline；RPC 路径走公共库
+- aio-collect-hang-logs.sh 1.2.0: 交互输入启用 readline（保持自包含）
+- goldendb_distribute_scripts.sh 1.0.2 及清理脚本: 交互输入启用 readline（保持自包含）"
 
     RELEASE_RESPONSE=$(curl -s -X POST \
         -H "Accept: application/vnd.github+json" \

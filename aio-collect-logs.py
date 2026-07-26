@@ -1,9 +1,10 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
-# 版本: 2.1.0
+# 版本: 2.2.0
 """
 AIO任务日志收集工具
 
+v2.2.0: aio.env/ENC/mysql/RPC 路径统一走 lib/aio_common，RPC 路径支持 amd64/arm64 fallback
 v2.1.0: 新增 --failed-only(仅收集失败子任务) 和 --subtask <ids>(仅收集指定子任务ID)
         适用于多子任务中只有个别失败的场景,大幅减少日志包体积
 
@@ -29,7 +30,7 @@ v2.1.0: 新增 --failed-only(仅收集失败子任务) 和 --subtask <ids>(仅�
   目录和文件权限为777/666，普通用户可直接读取和拷走
 """
 
-VERSION = "2.1.0"
+VERSION = "2.2.0"
 
 import os
 import sys
@@ -38,97 +39,29 @@ import tarfile
 import shutil
 import subprocess
 import datetime
-import tempfile
-from pathlib import Path
 
-AIO_HOME = "/opt/aio"
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(SCRIPT_DIR, "lib"))
+import aio_common
+
+AIO_HOME = aio_common.AIO_HOME
 LOG_BASE_PATH = "{}/logs/task".format(AIO_HOME)
 OUTPUT_BASE = "/tmp/aio_collected_logs"
 
 RPC_CONFIG = {
-    "command": "/opt/aio/airflow/tools/rpc/{}/rpc".format(os.uname().machine),
+    "command": aio_common.rpc_bin(),
     "port": 6611
 }
 
-DB_CONFIG = {
-    "host": None,
-    "port": None,
-    "user": None,
-    "password": None,
-    "database": None
-}
-MYSQL_DEFAULTS_FILE = None
-
-
-def strip_quotes(s):
-    """去除首尾单引号或双引号"""
-    if len(s) >= 2 and s[0] in ("'", '"') and s[-1] == s[0]:
-        return s[1:-1]
-    return s
-
-
-def decrypt_enc_password(enc_str):
-    """解密ENC格式的密码"""
-    if not enc_str.startswith("ENC(") or not enc_str.endswith(")"):
-        return enc_str
-    enc_data = enc_str[4:-1]
-    try:
-        cmd = [
-            "{}/cdm/bin/python3".format(AIO_HOME), "-c",
-            "import sys, base64, os; "
-            "sys.path.insert(0, '{}/cdm/lib/python3.6/site-packages'); "
-            "from Crypto.Cipher import AES; "
-            "from Crypto.Util.Padding import unpad; "
-            "from aio.config.key import AES_KEY_BASE_64; "
-            "key = base64.b64decode(AES_KEY_BASE_64); "
-            "data = base64.b64decode(os.environ['AIO_ENC_DATA']); "
-            "decrypted = unpad(AES.new(key, AES.MODE_CBC, IV=b'0000000000000000').decrypt(data), AES.block_size); "
-            "sys.stdout.buffer.write(decrypted)".format(AIO_HOME)
-        ]
-        env = os.environ.copy()
-        env['AIO_ENC_DATA'] = enc_data
-        r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10, env=env)
-        if r.returncode == 0:
-            return r.stdout.decode('utf-8', errors='ignore')
-    except Exception:
-        pass
-    return enc_str
+MYSQL = None
 
 
 def load_config():
-    env_file = "{}/cfg/aio.env".format(AIO_HOME)
-    if not os.path.exists(env_file):
-        print("[ERROR] 配置文件不存在: {}".format(env_file))
-        sys.exit(1)
-
-    with open(env_file, 'r') as f:
-        for line in f:
-            line = line.strip()
-            if line and not line.startswith('#') and '=' in line:
-                key, value = line.split('=', 1)
-                key = key.strip()
-                value = strip_quotes(value.strip())
-                if key == "AIO_DB_HOSTNAME":
-                    DB_CONFIG["host"] = value
-                elif key == "AIO_DB_PORT":
-                    DB_CONFIG["port"] = int(value)
-                elif key == "AIO_DB_USERNAME":
-                    DB_CONFIG["user"] = value
-                elif key == "AIO_DB_PASSWORD":
-                    DB_CONFIG["password"] = decrypt_enc_password(value)
-                elif key == "AIO_DB_NAME":
-                    DB_CONFIG["database"] = value
+    global MYSQL
+    if MYSQL is None:
+        MYSQL = aio_common.MySQL(aio_common.load_db_config())
 
 load_config()
-
-if not DB_CONFIG["host"]:
-    DB_CONFIG["host"] = "127.0.0.1"
-if not DB_CONFIG["port"]:
-    DB_CONFIG["port"] = 3306
-if not DB_CONFIG["user"]:
-    DB_CONFIG["user"] = "root"
-if not DB_CONFIG["database"]:
-    DB_CONFIG["database"] = "aio"
 
 
 def get_local_ips():
@@ -147,54 +80,16 @@ def get_local_ips():
 LOCAL_IPS = get_local_ips()
 
 
-def get_mysql_defaults_file():
-    global MYSQL_DEFAULTS_FILE
-    if MYSQL_DEFAULTS_FILE and os.path.exists(MYSQL_DEFAULTS_FILE):
-        return MYSQL_DEFAULTS_FILE
-
-    if not DB_CONFIG["password"]:
-        print("[ERROR] 数据库密码未配置")
-        sys.exit(1)
-
-    fd, path = tempfile.mkstemp(prefix="aio_mysql_", suffix=".cnf", dir="/tmp")
-    os.fchmod(fd, 0o600)
-    with os.fdopen(fd, 'w') as f:
-        f.write("[client]\n")
-        f.write("host={}\n".format(DB_CONFIG["host"]))
-        f.write("port={}\n".format(DB_CONFIG["port"]))
-        f.write("user={}\n".format(DB_CONFIG["user"]))
-        f.write("password={}\n".format(DB_CONFIG["password"]))
-    MYSQL_DEFAULTS_FILE = path
-    return MYSQL_DEFAULTS_FILE
-
-
 def cleanup_mysql_defaults_file():
-    global MYSQL_DEFAULTS_FILE
-    if MYSQL_DEFAULTS_FILE and os.path.exists(MYSQL_DEFAULTS_FILE):
-        os.remove(MYSQL_DEFAULTS_FILE)
-    MYSQL_DEFAULTS_FILE = None
+    if MYSQL is not None:
+        MYSQL.cleanup()
 
 
 def execute_mysql_query(sql, database=None):
-    db_name = database or DB_CONFIG["database"]
-    defaults_file = get_mysql_defaults_file()
-    cmd = [
-        "/usr/local/mysql/bin/mysql",
-        "--defaults-extra-file={}".format(defaults_file),
-        db_name, "-N", "-e", sql
-    ]
-    try:
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
-        if result.returncode != 0:
-            print("[ERROR] MySQL查询失败: {}".format(result.stderr.decode().strip()))
-            return []
-        output = result.stdout.decode().strip()
-        if not output:
-            return []
-        return [line.split('\t') for line in output.split('\n') if line]
-    except Exception as e:
-        print("[ERROR] MySQL查询异常: {}".format(e))
-        return []
+    rows = MYSQL.query(sql, database=database)
+    if MYSQL.last_error:
+        print("[ERROR] MySQL查询失败: {}".format(MYSQL.last_error))
+    return rows
 
 
 def is_local(ip):

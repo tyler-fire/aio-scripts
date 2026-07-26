@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
-# 版本: 1.0.0
+# 版本: 1.1.0
 """
 AIO Worker 性能分析工具
 
@@ -26,58 +26,20 @@ AIO Worker 性能分析工具
   终端：性能摘要 + ASCII 图表
 """
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 import os
 import sys
-import re
-import subprocess
 import datetime
-import tempfile
 import argparse
 from collections import defaultdict
-import json
 
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(SCRIPT_DIR, "lib"))
+import aio_common
 
-def decrypt_enc_password(enc_str):
-    """解密ENC格式的密码"""
-    if not enc_str.startswith("ENC(") or not enc_str.endswith(")"):
-        return enc_str
-    enc_data = enc_str[4:-1]
-    try:
-        cmd = [
-            "{}/cdm/bin/python3".format(AIO_HOME), "-c",
-            "import sys, base64, os; "
-            "sys.path.insert(0, '{}/cdm/lib/python3.6/site-packages'); "
-            "from Crypto.Cipher import AES; "
-            "from Crypto.Util.Padding import unpad; "
-            "from aio.config.key import AES_KEY_BASE_64; "
-            "key = base64.b64decode(AES_KEY_BASE_64); "
-            "data = base64.b64decode(os.environ['AIO_ENC_DATA']); "
-            "decrypted = unpad(AES.new(key, AES.MODE_CBC, IV=b'0000000000000000').decrypt(data), AES.block_size); "
-            "sys.stdout.buffer.write(decrypted)".format(AIO_HOME)
-        ]
-        env = os.environ.copy()
-        env['AIO_ENC_DATA'] = enc_data
-        r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10, env=env)
-        if r.returncode == 0:
-            return r.stdout.decode('utf-8', errors='ignore')
-    except Exception:
-        pass
-    return enc_str
-
-
-def strip_quotes(s):
-    """去除首尾单引号或双引号"""
-    if len(s) >= 2 and s[0] in ("'", '"') and s[-1] == s[0]:
-        return s[1:-1]
-    return s
-
-AIO_HOME = "/opt/aio"
-DB_CONFIG = {"host": None, "port": None, "user": None, "password": None, "database": None}
-MYSQL_DEFAULTS_FILE = None
-RPC_BASE = "{}/airflow/tools/rpc".format(AIO_HOME)
-RPC_BIN = "{}/{}/rpc".format(RPC_BASE, os.uname().machine)
+AIO_HOME = aio_common.AIO_HOME
+MYSQL = None
 SERVER_IP = None
 BROKER_URL = None
 
@@ -92,175 +54,37 @@ THRESHOLDS = {
 
 
 def load_config():
-    global SERVER_IP, BROKER_URL, DB_CONFIG
-
-    runtime_file = "{}/cfg/airflow.runtime.env".format(AIO_HOME)
-    if os.path.exists(runtime_file):
-        with open(runtime_file) as f:
-            for line in f:
-                line = line.strip()
-                if line.startswith("AIRFLOW__CELERY__BROKER_URL="):
-                    BROKER_URL = line.split("=", 1)[1].strip()
-
-    env_file = "{}/cfg/aio.env".format(AIO_HOME)
-    if not os.path.exists(env_file):
-        print("[ERROR] 配置文件不存在: {}".format(env_file))
+    global SERVER_IP, BROKER_URL, MYSQL
+    BROKER_URL = aio_common.load_broker_url()
+    db_config = aio_common.load_db_config()
+    SERVER_IP = db_config["host"]
+    if not db_config["password"]:
+        print("[ERROR] 数据库密码未配置")
         sys.exit(1)
-
-    with open(env_file, 'r') as f:
-        for line in f:
-            line = line.strip()
-            if line and not line.startswith('#') and '=' in line:
-                key, value = line.split('=', 1)
-                key = key.strip()
-                value = strip_quotes(value.strip())
-                if key == "AIO_DB_HOSTNAME":
-                    SERVER_IP = value
-                    DB_CONFIG["host"] = value
-                elif key == "AIO_DB_PORT":
-                    DB_CONFIG["port"] = int(value) if value else None
-                elif key == "AIO_DB_USERNAME":
-                    DB_CONFIG["user"] = value
-                elif key == "AIO_DB_PASSWORD":
-                    DB_CONFIG["password"] = decrypt_enc_password(value)
-                elif key == "AIO_DB_NAME":
-                    DB_CONFIG["database"] = value
-
-    if not DB_CONFIG["host"]:
-        DB_CONFIG["host"] = "127.0.0.1"
-    if not DB_CONFIG["port"]:
-        DB_CONFIG["port"] = 3306
-    if not DB_CONFIG["user"]:
-        DB_CONFIG["user"] = "root"
-    if not DB_CONFIG["database"]:
-        DB_CONFIG["database"] = "aio"
+    MYSQL = aio_common.MySQL(db_config)
 
 
 def discover_workers():
     """发现Worker节点"""
-    workers = []
-
-    # 方式1: 通过 Celery inspect 发现活跃 Worker
-    if BROKER_URL:
-        python_bin = "{}/airflow/bin/python3".format(AIO_HOME)
-        if not os.path.exists(python_bin):
-            python_bin = sys.executable
-
-        script = (
-            "from celery import Celery; "
-            "app = Celery(broker='{}'); "
-            "active = app.control.inspect(timeout=5).active_queues() or {{}}; "
-            "print('\\n'.join(n.split('@',1)[-1] for n in sorted(active)))"
-        ).format(BROKER_URL)
-
-        queues = []
-        try:
-            r = subprocess.run([python_bin, "-c", script],
-                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
-            if r.returncode == 0 and r.stdout.decode().strip():
-                queues = [n.strip() for n in r.stdout.decode().strip().split('\n') if n.strip()]
-        except Exception:
-            pass
-
-        if queues:
-            results = execute_mysql_query(
-                "SELECT sys_dn_ipaddr FROM aio_data_nodes WHERE sys_dn_queue IN ({}) AND sys_dn_is_delete = 0".format(
-                    ",".join("'{}'".format(q) for q in queues)
-                )
-            )
-            ips = [row[0].strip() for row in results if row and row[0].strip()]
-            if ips:
-                return list(dict.fromkeys(ips))
-
-    # 方式2: 直接查 MySQL 获取所有 Worker IP
-    try:
-        results = execute_mysql_query("SELECT DISTINCT sys_dn_ipaddr FROM aio_data_nodes WHERE sys_dn_is_delete = 0")
-        ips = [row[0].strip() for row in results if row and row[0].strip()]
-        if ips:
-            return list(dict.fromkeys(ips))
-    except Exception as e:
-        print("查询数据库失败: {}".format(e))
-
-    return workers
-
-
-def get_mysql_defaults_file():
-    global MYSQL_DEFAULTS_FILE
-    if MYSQL_DEFAULTS_FILE and os.path.exists(MYSQL_DEFAULTS_FILE):
-        return MYSQL_DEFAULTS_FILE
-
-    if not DB_CONFIG["password"]:
-        print("[ERROR] 数据库密码未配置")
-        sys.exit(1)
-
-    fd, path = tempfile.mkstemp(prefix="aio_mysql_", suffix=".cnf", dir="/tmp")
-    os.fchmod(fd, 0o600)
-    with os.fdopen(fd, 'w') as f:
-        f.write("[client]\n")
-        f.write("host={}\n".format(DB_CONFIG["host"]))
-        f.write("port={}\n".format(DB_CONFIG["port"]))
-        f.write("user={}\n".format(DB_CONFIG["user"]))
-        f.write("password={}\n".format(DB_CONFIG["password"]))
-    MYSQL_DEFAULTS_FILE = path
-    return MYSQL_DEFAULTS_FILE
+    return aio_common.discover_workers(MYSQL, BROKER_URL)
 
 
 def cleanup_mysql_defaults_file():
-    global MYSQL_DEFAULTS_FILE
-    if MYSQL_DEFAULTS_FILE and os.path.exists(MYSQL_DEFAULTS_FILE):
-        os.remove(MYSQL_DEFAULTS_FILE)
-    MYSQL_DEFAULTS_FILE = None
+    if MYSQL is not None:
+        MYSQL.cleanup()
 
 
 def execute_mysql_query(sql):
-    defaults_file = get_mysql_defaults_file()
-    cmd = [
-        "/usr/local/mysql/bin/mysql",
-        "--defaults-extra-file={}".format(defaults_file),
-        DB_CONFIG["database"], "-N", "-e", sql
-    ]
-    try:
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
-        if result.returncode != 0:
-            return []
-        output = result.stdout.decode().strip()
-        if not output:
-            return []
-        return [line.split('\t') for line in output.split('\n') if line]
-    except Exception:
-        return []
+    return MYSQL.query(sql)
 
 
 def rpc_execute(host, command, port=6611):
-    """通过 RPC 执行命令"""
-    try:
-        rpc_path = "/opt/aio/airflow/tools/rpc/{}/rpc".format(os.uname().machine)
-        cmd = [rpc_path, '-h', host, '-p', str(port), '-c', command]
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
-
-        if result.returncode == 0:
-            return result.stdout.decode()
-
-        # 连接失败，显示错误信息
-        stderr = result.stderr.decode('utf-8', errors='ignore').strip()
-        if 'Connection refused' in stderr or 'connect failed' in stderr:
-            print("  ⚠️  Worker {} RPC 连接失败（端口 {} 不可达）".format(host, port))
-        elif 'No route to host' in stderr or 'Host is unreachable' in stderr:
-            print("  ⚠️  Worker {} 网络不可达".format(host))
-        elif 'timed out' in stderr.lower() or 'timeout' in stderr.lower():
-            print("  ⚠️  Worker {} RPC 连接超时".format(host))
-        elif stderr:
-            print("  ⚠️  Worker {} RPC 执行失败: {}".format(host, stderr[:100]))
-        else:
-            print("  ⚠️  Worker {} RPC 返回错误（退出码 {}）".format(host, result.returncode))
-        return None
-
-    except subprocess.TimeoutExpired:
-        print("  ⚠️  Worker {} RPC 连接超时（60秒）".format(host))
-        return None
-    except Exception as e:
-        print("  ⚠️  Worker {} RPC 执行异常: {}".format(host, str(e)))
-        return None
+    """通过 RPC 执行命令，失败时打印统一提示并返回 None"""
+    rc, stdout, stderr = aio_common.rpc_run(host, command, port=port, timeout=60)
+    if rc == 0:
+        return stdout.decode('utf-8', errors='ignore')
+    print("  ⚠️  {}".format(aio_common.describe_rpc_error(host, rc, stderr, port)))
+    return None
 
 
 def parse_sar_cpu(sar_output):
@@ -546,30 +370,11 @@ def find_task_at_time(tasks, time_str, date_str):
 
 def query_tasks(worker_ip, start_date, end_date):
     """查询 Worker 在指定时间范围内的任务"""
-    sql = """
-    SELECT t.id, t.task_num, t.task_type, t.task_status,
-           t.start_time, t.end_time
-    FROM aio_total_task t
-    JOIN aio_sub_task s ON t.id = s.total_task_id
-    WHERE s.src_node_ip = '{}'
-    AND t.start_time >= '{}'
-    AND t.start_time <= '{}'
-    ORDER BY t.start_time
-    """.format(worker_ip, start_date, end_date)
+    # worker_ip 会拼进 SQL 和远端命令，必须先过统一校验（main 里也拦了一道）
+    if not aio_common.valid_host(worker_ip):
+        print("[ERROR] 非法的 Worker IP: {}".format(worker_ip))
+        return []
 
-    results = execute_mysql_query(sql)
-    tasks = []
-    for row in results:
-        tasks.append({
-            'id': int(row[0]),
-            'task_num': row[1],
-            'task_type': row[2],
-            'status': row[3],
-            'start_time': row[4],
-            'end_time': row[5]
-        })
-    return tasks
-    """查询 Worker 在指定时间范围内的任务"""
     sql = """
     SELECT t.id, t.task_num, t.task_type, t.task_status,
            t.start_time, t.end_time
@@ -838,6 +643,10 @@ def main():
     parser.add_argument('--version', action='version', version='v{}'.format(VERSION))
 
     args = parser.parse_args()
+
+    if args.worker_ip and not aio_common.valid_host(args.worker_ip):
+        print("[ERROR] 非法的 Worker IP: {}".format(args.worker_ip))
+        sys.exit(1)
 
     try:
         load_config()

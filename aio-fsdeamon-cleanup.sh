@@ -1,5 +1,6 @@
 #!/bin/bash
-# 版本: 1.5.0
+# 版本: 1.5.1
+# v1.5.1: 交互输入启用 readline（read -e），退格/中文编辑不再乱码；RPC 路径走公共库
 #
 # fsdeamon 监控数据源清理工具
 #
@@ -28,10 +29,18 @@
 #   以及源端 /var/fsbackup/ 下的工具文件，需手工清理。
 #
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [ -f "$SCRIPT_DIR/lib/common.sh" ]; then
+    # shellcheck source=lib/common.sh
+    source "$SCRIPT_DIR/lib/common.sh"
+    RPC="$(aio_rpc_bin)"
+else
+    RPC="/opt/aio/airflow/tools/rpc/$(uname -m)/rpc"
+fi
+
 ARCH=$(uname -m)
 FS_CLI="/opt/aio/airflow/tools/fs-tools/$ARCH/fsclient/fs-cli"
 FS_CLI_DIR=$(dirname "$FS_CLI")
-RPC="/opt/aio/airflow/tools/rpc/$ARCH/rpc"
 PORT="8901"
 RPC_PORT="6611"
 
@@ -193,7 +202,7 @@ echo "    1 3 5    - 指定序号（空格分隔）"
 echo "    1-5      - 连续范围"
 echo "    all      - 全部删除"
 echo "    q        - 退出"
-read -rp "  请选择: " CHOICE
+read -rep "  请选择: " CHOICE
 
 # 过滤控制字符和非打印字符
 CHOICE=$(echo "$CHOICE" | tr -cd '[:alnum:]- \n')
@@ -297,8 +306,7 @@ except Exception:
         fi
     fi
 
-    echo -n "    确认删除该数据源? [y/N]: "
-    read -r CONFIRM
+    read -rep "    确认删除该数据源? [y/N]: " CONFIRM
     if [ "$CONFIRM" != "y" ] && [ "$CONFIRM" != "Y" ]; then
         echo "    跳过"
         continue

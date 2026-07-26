@@ -1,19 +1,24 @@
 #!/bin/bash
-# 版本: 1.2.8
+# 版本: 1.3.0
 # AIO 运维工具集入口
+# v1.3.0: 交互输入启用 readline（read -e），退格/中文编辑不再乱码；
+#         RPC 路径、公共函数统一走 lib/common.sh
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [[ ! -f "$SCRIPT_DIR/lib/common.sh" ]]; then
+    echo "[ERROR] 缺少公共库 $SCRIPT_DIR/lib/common.sh（请重新安装 aio-scripts）" >&2
+    exit 1
+fi
+# shellcheck source=lib/common.sh
+source "$SCRIPT_DIR/lib/common.sh"
+
 RPC_PORT="${RPC_PORT:-6611}"
 RPC_TIMEOUT="${RPC_TIMEOUT:-15}"
-RAW_ARCH="$(uname -m)"
-RPC_BIN="/opt/aio/airflow/tools/rpc/$RAW_ARCH/rpc"
-if [[ ! -x "$RPC_BIN" && "$RAW_ARCH" == "amd64" && -x "/opt/aio/airflow/tools/rpc/x86_64/rpc" ]]; then
-    RPC_BIN="/opt/aio/airflow/tools/rpc/x86_64/rpc"
-elif [[ ! -x "$RPC_BIN" && "$RAW_ARCH" == "arm64" && -x "/opt/aio/airflow/tools/rpc/aarch64/rpc" ]]; then
-    RPC_BIN="/opt/aio/airflow/tools/rpc/aarch64/rpc"
-fi
+RPC_BIN="$(aio_rpc_bin)"
 
 # 子工具定义（文件名|功能描述）
 TOOLS=(
+    "lib/common.sh|公共库(shell)"
+    "lib/aio_common.py|公共库(python)"
     "aio-collect-logs.py|日志收集"
     "aio-diagnose.py|任务完整分析包"
     "aio-worker-performance.py|性能分析"
@@ -82,7 +87,7 @@ show_menu() {
 }
 
 tool_collect_logs() {
-    read -rp "请输入任务ID (在Web页面任务列表查看): " task_id
+    read -rep "请输入任务ID (在Web页面任务列表查看): " task_id
     if [ -z "$task_id" ]; then
         echo "[ERROR] 任务ID不能为空"
         return 1
@@ -90,7 +95,7 @@ tool_collect_logs() {
 
     # 默认只看失败的子任务(这是最常见的排障场景)
     # 输入「全部」才会收所有子任务
-    read -rp "收集范围 [失败子任务(默认)/全部子任务]: " scope
+    read -rep "收集范围 [失败子任务(默认)/全部子任务]: " scope
     scope=$(echo "$scope" | tr -d '[:space:]')
     if [[ "$scope" == "全部" || "$scope" == "all" || "$scope" == "ALL" ]]; then
         extra_args=""
@@ -98,7 +103,7 @@ tool_collect_logs() {
         extra_args="--failed-only"
     fi
 
-    read -rp "指定阶段 (在Web页面任务详情查看阶段名, 多个逗号分隔, 回车=全部): " stages
+    read -rep "指定阶段 (在Web页面任务详情查看阶段名, 多个逗号分隔, 回车=全部): " stages
     if [ -n "$stages" ]; then
         python3 "$SCRIPT_DIR/aio-collect-logs.py" "$task_id" --stages "$stages" $extra_args
     else
@@ -110,7 +115,7 @@ tool_diagnose() {
     echo "说明: 本工具收集任务日志、数据库记录、服务日志和系统日志。"
     echo "生成的整体 tar.gz 包用于上传到 AIO Log 分析平台进行分析。"
     echo ""
-    read -rp "请输入任务ID (在Web页面任务列表查看): " task_id
+    read -rep "请输入任务ID (在Web页面任务列表查看): " task_id
     if [ -z "$task_id" ]; then
         echo "[ERROR] 任务ID不能为空"
         return 1
@@ -119,8 +124,8 @@ tool_diagnose() {
 }
 
 tool_performance() {
-    read -rp "请输入 Worker IP (回车=自动查询所有Worker): " worker_ip
-    read -rp "分析天数 (3/7/14/30, 默认7): " days
+    read -rep "请输入 Worker IP (回车=自动查询所有Worker): " worker_ip
+    read -rep "分析天数 (3/7/14/30, 默认7): " days
     if [ -z "$days" ]; then
         days=7
     fi
@@ -132,7 +137,7 @@ tool_performance() {
 }
 
 tool_fsdeamon_cleanup() {
-    read -rp "请输入Worker IP: " worker_ip
+    read -rep "请输入Worker IP: " worker_ip
     if [ -z "$worker_ip" ]; then
         echo "[ERROR] Worker IP不能为空"
         return 1
@@ -147,7 +152,7 @@ tool_collect_versions() {
 
     echo "输入多个 IP 时可使用逗号或空格分隔。"
     echo "脚本会结合 MySQL 记录和远端环境自动识别 Worker / Agent。"
-    read -rp "请输入目标 IP (回车=自动收集数据库中的全部主机): " input
+    read -rep "请输入目标 IP (回车=自动收集数据库中的全部主机): " input
     input=${input//,/ }
     if [[ -z "${input//[[:space:]]/}" ]]; then
         bash "$SCRIPT_DIR/aio-collect-v.sh"
@@ -225,7 +230,7 @@ tool_collect_hang_logs() {
         return 1
     fi
 
-    read -rp "请输入目标主机 IP: " target_ip
+    read -rep "请输入目标主机 IP: " target_ip
     target_ip=$(echo "$target_ip" | tr -d '[:space:]')
     if [ -z "$target_ip" ]; then
         echo "[ERROR] 目标主机 IP 不能为空"
@@ -237,14 +242,14 @@ tool_collect_hang_logs() {
     fi
 
     while true; do
-        read -rp "本次收集从几号几点开始 (例: 2026-07-06 18:00:00): " start_time
+        read -rep "本次收集从几号几点开始 (例: 2026-07-06 18:00:00): " start_time
         start_time=$(normalize_time "$start_time" || true)
         [ -n "$start_time" ] && break
         echo "[ERROR] 开始时间格式不正确"
     done
 
     while true; do
-        read -rp "本次收集到几号几点结束 (例: 2026-07-06 18:40:00): " end_time
+        read -rep "本次收集到几号几点结束 (例: 2026-07-06 18:40:00): " end_time
         end_time=$(normalize_time "$end_time" || true)
         [ -n "$end_time" ] && break
         echo "[ERROR] 结束时间格式不正确"
@@ -255,7 +260,7 @@ tool_collect_hang_logs() {
         return 1
     fi
 
-    read -rp "是否附加收集 AIO 服务日志? [y/N]: " include_aio
+    read -rep "是否附加收集 AIO 服务日志? [y/N]: " include_aio
     case "$include_aio" in
         y|Y|yes|YES)
             include_aio=1
@@ -381,14 +386,14 @@ tool_license() {
     echo "    2) 激活/重新激活"
     echo "    3) 恢复为未激活"
     echo "    0) 返回"
-    read -rp "  请选择 [0-3]: " action
+    read -rep "  请选择 [0-3]: " action
 
     case "$action" in
         1)
             bash "$SCRIPT_DIR/license.sh"
             ;;
         2)
-            read -rp "  确认激活/重新激活 License? 输入 yes 继续: " confirm
+            read -rep "  确认激活/重新激活 License? 输入 yes 继续: " confirm
             if [ "$confirm" = "yes" ]; then
                 bash "$SCRIPT_DIR/license.sh" apply
             else
@@ -396,7 +401,7 @@ tool_license() {
             fi
             ;;
         3)
-            read -rp "  确认恢复为未激活状态? 输入 yes 继续: " confirm
+            read -rep "  确认恢复为未激活状态? 输入 yes 继续: " confirm
             if [ "$confirm" = "yes" ]; then
                 bash "$SCRIPT_DIR/license.sh" revert
             else
@@ -479,7 +484,7 @@ fi
 
 while true; do
     show_menu
-    read -rp "请选择 [0-12]: " choice
+    read -rep "请选择 [0-12]: " choice
     case "$choice" in
         0) echo "退出."; exit 0 ;;
         -v|--version) show_versions ;;
