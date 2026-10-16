@@ -14,7 +14,7 @@ bash aio-scripts.install
 也可以使用 Release 包：
 
 ```bash
-wget https://github.com/tyler-fire/aio-scripts/releases/download/v2.2.0/aio-scripts.install
+wget https://github.com/tyler-fire/aio-scripts/releases/download/v2.2.1/aio-scripts.install
 bash aio-scripts.install
 ```
 
@@ -103,8 +103,8 @@ bash /opt/aio/ps_scripts/aio-collect-v.sh '10.7.16.217,10.7.16.66'
 
 ## 版本信息
 
-- 当前版本: **2.2.0**
-- 发布日期: 2026-07-27
+- 当前版本: **2.2.1**
+- 发布日期: 2026-10-16
 
 ## 开发约定
 
@@ -115,6 +115,11 @@ bash /opt/aio/ps_scripts/aio-collect-v.sh '10.7.16.217,10.7.16.66'
 - 远端命令/SQL 中拼接主机名前必须过 `aio_valid_host` / `aio_common.valid_host`。
 
 ## 更新日志
+
+### v2.2.1 (2026-10-16)
+
+- `aio-tools.sh` 1.3.1（日志收集范围提示与解析修复）：此前「收集范围」只有在输入严格等于 `全部` 时才收集全部子任务，输入 `全部子任务`（照抄提示词）或其它写法会被静默当成 `--failed-only`，任务若无可收集失败子任务就只报「过滤后没有匹配的子任务」，表现为「全部收集却什么都没收到」。现在提示改为 `[failed=仅失败子任务(回车默认) / all=全部子任务]`，输入词统一为英文关键字：回车/`failed` 只收失败子任务，`all` 收全部；解析会归一化输入（去空白、去 `子任务`/`任务` 字样、转小写），同时兼容 `all/full` 与 `failed/failed-only`；无法识别时直接报错并提示输入 `all` 或 `failed`，不再静默降级；并回显实际生效的收集范围。
+- `aio-collect-logs.py` 2.2.1：`--failed-only` 过滤后为 0 时，明确提示「该任务没有失败子任务（可能仍在运行或已全部成功）」并指引「输入 all 收全部」。
 
 ### v2.2.0 (2026-07-27)
 

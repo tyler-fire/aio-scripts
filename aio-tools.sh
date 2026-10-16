@@ -1,5 +1,5 @@
 #!/bin/bash
-# 版本: 1.3.0
+# 版本: 1.3.1
 # AIO 运维工具集入口
 # v1.3.0: 交互输入启用 readline（read -e），退格/中文编辑不再乱码；
 #         RPC 路径、公共函数统一走 lib/common.sh
@@ -68,7 +68,7 @@ show_menu() {
     echo "========================================"
     echo " AIO 运维工具集"
     echo "========================================"
-    echo "  1) 日志收集    - 根据任务ID收集日志(默认只收失败子任务,输入「全部」可收全部)"
+    echo "  1) 日志收集    - 根据任务ID收集日志(回车=failed仅失败子任务, 输入all收全部)"
     echo "  2) 任务完整分析包 - 收集任务整体信息，供Log分析平台分析"
     echo "  3) 性能分析    - Worker性能趋势(基于sar数据)"
     echo "  4) fsdeamon清理 - 清理fsdeamon残留挂载和进程"
@@ -93,17 +93,30 @@ tool_collect_logs() {
         return 1
     fi
 
-    # 默认只看失败的子任务(这是最常见的排障场景)
-    # 输入「全部」才会收所有子任务
-    read -rep "收集范围 [失败子任务(默认)/全部子任务]: " scope
-    scope=$(echo "$scope" | tr -d '[:space:]')
-    if [[ "$scope" == "全部" || "$scope" == "all" || "$scope" == "ALL" ]]; then
-        extra_args=""
-    else
-        extra_args="--failed-only"
-    fi
+    # 收集范围: 直接回车 = failed(仅失败子任务)；输入 all = 全部子任务
+    read -rep "收集范围 [failed=仅失败子任务(回车默认) / all=全部子任务]: " scope
+    # 归一化: 去空白、去「子任务/任务」字样、转小写
+    local norm
+    norm=$(printf '%s' "$scope" | tr -d '[:space:]' | tr 'A-Z' 'a-z')
+    norm=${norm//子任务/}
+    norm=${norm//任务/}
+    case "$norm" in
+        ""|failed|f|failedonly|failed_only|failed-only|失败|仅失败)
+            extra_args="--failed-only"
+            echo "  → 收集范围: failed (仅失败子任务)"
+            ;;
+        all|a|full|全部|全|所有)
+            extra_args=""
+            echo "  → 收集范围: all (全部子任务)"
+            ;;
+        *)
+            echo "[ERROR] 无法识别的收集范围: 「${scope}」"
+            echo "        请重新执行并输入 all(全部子任务) 或 failed(仅失败子任务)"
+            return 1
+            ;;
+    esac
 
-    read -rep "指定阶段 (在Web页面任务详情查看阶段名, 多个逗号分隔, 回车=全部): " stages
+    read -rep "指定阶段 (Web任务详情的阶段名, 多个逗号分隔, 回车=所有阶段): " stages
     if [ -n "$stages" ]; then
         python3 "$SCRIPT_DIR/aio-collect-logs.py" "$task_id" --stages "$stages" $extra_args
     else

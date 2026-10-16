@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
-# 版本: 2.2.0
+# 版本: 2.2.1
 """
 AIO任务日志收集工具
 
@@ -30,7 +30,7 @@ v2.1.0: 新增 --failed-only(仅收集失败子任务) 和 --subtask <ids>(仅�
   目录和文件权限为777/666，普通用户可直接读取和拷走
 """
 
-VERSION = "2.2.0"
+VERSION = "2.2.1"
 
 import os
 import sys
@@ -273,7 +273,13 @@ class TaskLogCollector:
             print("  过滤: 仅收集失败子任务 {}/{} 个".format(len(kept), total))
 
         if not self.sub_tasks:
-            print("\n[WARN] 过滤后没有匹配的子任务")
+            if self.failed_only:
+                print("\n[WARN] 过滤后没有匹配的子任务")
+                print("       该任务没有 failed/failed_uncleaned 状态的子任务"
+                      "（可能仍在运行或已全部成功）。")
+                print("       如需所有子任务，请在日志收集里输入 all，或去掉 --failed-only 重新执行。")
+            else:
+                print("\n[WARN] 过滤后没有匹配的子任务")
 
     def get_log_base_paths(self, sub_task):
         execution_date = sub_task.get("execution_date")
