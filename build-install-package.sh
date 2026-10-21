@@ -4,7 +4,7 @@
 
 set -e
 
-VERSION="2.2.1"
+VERSION="2.2.2"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUTPUT_FILE="$SCRIPT_DIR/aio-scripts.install"
 OUTPUT_TMP="$OUTPUT_FILE.tmp.$$"
@@ -305,7 +305,13 @@ if [[ "$publish" =~ ^[Yy]$ ]]; then
 
     # 2. 创建新 Release
     echo "  创建新 Release v${VERSION}..."
-RELEASE_BODY="## 本次更新（v2.2.1）
+RELEASE_BODY="## 本次更新（v2.2.2）
+
+- **File 推送卡住修复（重要）** - RPC 调用改用 \`timeout --foreground --kill-after\`。此前 \`timeout\` 把 RPC 放进独立进程组，终端 Ctrl-C 无法立即打断，必须等满 30 秒；现在 Ctrl-C 立即退出，异常 RPC 进程 5 秒后被强制回收。
+- **aio-file-push.sh 1.1.1** - 显式 \`-w\` 指定的 Worker 也会先做 5 秒 RPC 预检，不可达主机在上传确认前直接列失败；远程目录准备改为 10 秒超时，已存在目录只检查不 \`chmod\`，避免远端挂载点异常时卡住。
+- **lib/common.sh 1.0.1** - 统一 RPC 超时中断语义，其他使用公共库的工具同样受益。
+
+## v2.2.1 主要变更（往期）
 
 - **日志收集「收集范围」修复（重要）** - 此前只有输入严格等于「全部」才收全部子任务，输入「全部子任务」（照抄提示词）或其它写法会被静默当成 \`--failed-only\`；任务若没有失败子任务就只报「过滤后没有匹配的子任务」，表现为「选了全部却什么都没收到」。现在输入词统一为英文关键字：回车/\`failed\` 只收失败子任务，\`all\` 收全部；无法识别时直接报错，不再静默降级，并回显实际生效的范围。
 - **aio-collect-logs.py** - \`--failed-only\` 过滤后为 0 时，明确提示「该任务没有失败子任务（可能仍在运行或已全部成功）」并指引输入 \`all\`。
@@ -347,6 +353,7 @@ bash /opt/aio/ps_scripts/aio-tools.sh
 
 ## 📝 更新日志
 
+- lib/common.sh 1.0.1: RPC 超时支持 Ctrl-C 立即中断，超时后强制回收
 - lib/common.sh 1.0.0 / lib/aio_common.py 1.0.0: 新增公共库
 - aio-diagnose.py 1.1.0: 数据库快照与全部文本日志脱敏；接入公共库
 - aio-collect-v.sh 1.6.0: 主机并行 + RPC 批量执行；接入公共库
@@ -357,6 +364,7 @@ bash /opt/aio/ps_scripts/aio-tools.sh
 - check_aiopool_usage.py 1.2.0: 接入公共库；退出清理临时文件
 - aio-tools.sh 1.3.1: 日志收集范围提示改英文关键字(all/failed)，非法输入报错不再静默降级
 - aio-tools.sh 1.3.0: 全部交互输入启用 readline；接入公共库
+- aio-file-push.sh 1.1.1: RPC 可被 Ctrl-C 立即中断；显式 Worker 增加 5 秒预检
 - aio-file-push.sh 1.1.0: 接入公共库；交互输入启用 readline
 - aio-fsdeamon-cleanup.sh 1.5.1: 交互输入启用 readline；RPC 路径走公共库
 - aio-collect-hang-logs.sh 1.2.0: 交互输入启用 readline（保持自包含）

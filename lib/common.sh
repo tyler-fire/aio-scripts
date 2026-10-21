@@ -1,5 +1,5 @@
 #!/bin/bash
-# 版本: 1.0.0
+# 版本: 1.0.1
 # AIO 运维工具集公共库（shell）
 #
 # 用法（在各工具脚本开头）:
@@ -23,6 +23,7 @@ AIO_HOME="${AIO_HOME:-/opt/aio}"
 AIO_ENV_FILE="${AIO_ENV_FILE:-$AIO_HOME/cfg/aio.env}"
 AIO_RPC_PORT="${RPC_PORT:-6611}"
 AIO_RPC_TIMEOUT="${RPC_TIMEOUT:-15}"
+AIO_RPC_KILL_AFTER="${RPC_KILL_AFTER:-5}"
 AIO_MYSQL_DEFAULTS_FILE="${AIO_MYSQL_DEFAULTS_FILE:-}"
 
 if [[ -x /usr/local/mysql/bin/mysql ]]; then
@@ -176,7 +177,10 @@ aio_rpc_exec() {
     local run_timeout="${3:-$AIO_RPC_TIMEOUT}"
     local rpc_bin
     rpc_bin="$(aio_rpc_bin)"
-    timeout "$run_timeout" "$rpc_bin" -h "$host" -p "$AIO_RPC_PORT" -c "$cmd" 2>&1
+    # --foreground 让终端 Ctrl-C 直达 rpc，而不是等到 timeout 到期；
+    # --kill-after 兜底处理忽略 SIGTERM 的 rpc 进程。
+    timeout --foreground --kill-after="$AIO_RPC_KILL_AFTER" "$run_timeout" \
+        "$rpc_bin" -h "$host" -p "$AIO_RPC_PORT" -c "$cmd" 2>&1
 }
 
 # ---------- 交互输入 ----------

@@ -1,5 +1,8 @@
 #!/bin/bash
-# 版本: 1.1.0
+# 版本: 1.1.1
+# v1.1.1: RPC 调用使用 timeout --foreground --kill-after，Ctrl-C 可立即中断；
+#         显式 -w 指定的 Worker 也做 5 秒快速预检；
+#         已存在的 patchfiles 目录只检查不 chmod，避免远端挂载点卡住
 # v1.1.0: aio.env/ENC/mysql/RPC 封装统一走 lib/common.sh；
 #         交互输入启用 readline（read -e），退格/中文编辑不再乱码
 
@@ -25,6 +28,9 @@ PATCH_DIR="/opt/aio/ps_scripts/patchfiles"
 RPC_PORT="${RPC_PORT:-6611}"
 RPC_TIMEOUT="${RPC_TIMEOUT:-30}"
 RPC_UPLOAD_TIMEOUT="${RPC_UPLOAD_TIMEOUT:-7200}"
+RPC_PREPARE_TIMEOUT="${RPC_PREPARE_TIMEOUT:-10}"
+RPC_KILL_AFTER="${RPC_KILL_AFTER:-5}"
+RPC_PROBE_TIMEOUT="${RPC_PROBE_TIMEOUT:-5}"
 LOCAL_TMP_ROOT="$AIO_HOME/user_tmp"
 EXPLICIT_WORKERS=""
 PUSH_ALL=false
@@ -80,7 +86,8 @@ ensure_local_tmp() {
     local cmd out rc
     cmd="mkdir -p $(shell_quote "$LOCAL_TMP_ROOT") && chown $(shell_quote "${CURRENT_UID}:${CURRENT_GID}") $(shell_quote "$LOCAL_TMP_ROOT") && chmod 700 $(shell_quote "$LOCAL_TMP_ROOT")"
     set +e
-    out="$(timeout "$RPC_TIMEOUT" "$RPC_BIN" -h 127.0.0.1 -p "$RPC_PORT" -c "$cmd" 2>&1)"
+    out="$(timeout --foreground --kill-after="$RPC_KILL_AFTER" "$RPC_TIMEOUT" \
+        "$RPC_BIN" -h 127.0.0.1 -p "$RPC_PORT" -c "$cmd" 2>&1)"
     rc=$?
     set -e
     if [[ "$rc" -ne 0 ]]; then
@@ -118,27 +125,35 @@ validate_remote_basename() {
 rpc_cmd() {
     local host="$1"
     local cmd="$2"
-    timeout "$RPC_TIMEOUT" "$RPC_BIN" -h "$host" -p "$RPC_PORT" -c "$cmd" 2>&1
+    local run_timeout="${3:-$RPC_TIMEOUT}"
+    timeout --foreground --kill-after="$RPC_KILL_AFTER" "$run_timeout" \
+        "$RPC_BIN" -h "$host" -p "$RPC_PORT" -c "$cmd" 2>&1
 }
 
 rpc_upload() {
     local host="$1"
     local local_file="$2"
     local remote_file="$3"
-    timeout "$RPC_UPLOAD_TIMEOUT" "$RPC_BIN" -h "$host" -p "$RPC_PORT" --upload 1 --local "$local_file" --remote "$remote_file" 2>&1
+    timeout --foreground --kill-after="$RPC_KILL_AFTER" "$RPC_UPLOAD_TIMEOUT" \
+        "$RPC_BIN" -h "$host" -p "$RPC_PORT" --upload 1 \
+        --local "$local_file" --remote "$remote_file" 2>&1
 }
 
 probe_worker() {
     local host="$1"
     local out rc
     set +e
-    out="$(rpc_cmd "$host" "echo aio-rpc-ok")"
+    out="$(rpc_cmd "$host" "echo aio-rpc-ok" "$RPC_PROBE_TIMEOUT")"
     rc=$?
     set -e
     if [[ "$rc" -eq 0 && "$out" == *"aio-rpc-ok"* ]]; then
         printf 'OK\t%s\t-\n' "$host"
     else
-        printf 'FAIL\t%s\t%s\n' "$host" "$(echo "$out" | tr '\n' ' ' | cut -c1-100)"
+        if [[ "$rc" -eq 124 ]]; then
+            printf 'FAIL\t%s\tRPC timeout after %ss (network or aio-speedd:%s)\n' "$host" "$RPC_PROBE_TIMEOUT" "$RPC_PORT"
+        else
+            printf 'FAIL\t%s\t%s\n' "$host" "$(echo "$out" | tr '\n' ' ' | cut -c1-100)"
+        fi
     fi
 }
 
@@ -190,7 +205,20 @@ collect_target_workers() {
     local workers manual_workers probe_file host
 
     if [[ -n "$explicit_hosts" ]]; then
-        echo "$explicit_hosts" | split_hosts
+        probe_file="$LOCAL_TMP_ROOT/patch_worker_probe.$$"
+        : > "$probe_file"
+        echo "Probing explicit workers ..." >&2
+        while IFS= read -r host; do
+            [[ -n "$host" ]] || continue
+            if ! validate_host "$host"; then
+                printf 'FAIL\t%s\tinvalid host format\n' "$host" >> "$probe_file"
+                continue
+            fi
+            probe_worker "$host" >> "$probe_file"
+        done < <(echo "$explicit_hosts" | split_hosts)
+        awk -F '\t' '$1 != "OK" {printf "  [%s] %s %s\n", $1, $2, $3}' "$probe_file" >&2
+        awk -F '\t' '$1 == "OK" {print $2}' "$probe_file"
+        rm -f "$probe_file"
         return
     fi
 
@@ -301,7 +329,21 @@ print_local_files() {
 
 prepare_remote_dir() {
     local host="$1"
-    rpc_cmd "$host" "mkdir -p $(shell_quote "$PATCH_DIR") && chmod 755 $(shell_quote "$PATCH_DIR")" >/dev/null
+    local out rc qdir cmd
+    qdir="$(shell_quote "$PATCH_DIR")"
+    cmd="if [ -d $qdir ]; then echo PATCH_DIR_READY; else mkdir -p $qdir && chmod 755 $qdir && echo PATCH_DIR_CREATED; fi"
+    set +e
+    out="$(rpc_cmd "$host" "$cmd" "$RPC_PREPARE_TIMEOUT")"
+    rc=$?
+    set -e
+    if (( rc != 0 )); then
+        if (( rc == 124 )); then
+            echo "[$host] RPC prepare timed out after ${RPC_PREPARE_TIMEOUT}s (check $PATCH_DIR on the worker, network, and aio-speedd:${RPC_PORT})" >&2
+        elif [[ -n "$out" ]]; then
+            printf '%s\n' "$out" >&2
+        fi
+        return "$rc"
+    fi
 }
 
 push_file_to_worker() {

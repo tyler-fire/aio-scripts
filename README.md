@@ -14,7 +14,7 @@ bash aio-scripts.install
 也可以使用 Release 包：
 
 ```bash
-wget https://github.com/tyler-fire/aio-scripts/releases/download/v2.2.1/aio-scripts.install
+wget https://github.com/tyler-fire/aio-scripts/releases/download/v2.2.2/aio-scripts.install
 bash aio-scripts.install
 ```
 
@@ -103,8 +103,8 @@ bash /opt/aio/ps_scripts/aio-collect-v.sh '10.7.16.217,10.7.16.66'
 
 ## 版本信息
 
-- 当前版本: **2.2.1**
-- 发布日期: 2026-10-16
+- 当前版本: **2.2.2**
+- 发布日期: 2026-10-21
 
 ## 开发约定
 
@@ -115,6 +115,13 @@ bash /opt/aio/ps_scripts/aio-collect-v.sh '10.7.16.217,10.7.16.66'
 - 远端命令/SQL 中拼接主机名前必须过 `aio_valid_host` / `aio_common.valid_host`。
 
 ## 更新日志
+
+### v2.2.2 (2026-10-21)
+
+- `aio-file-push.sh` 1.1.1（File 推送卡住修复）：RPC 调用改用 `timeout --foreground --kill-after`。此前 `timeout` 会把 RPC 放进独立进程组，终端 Ctrl-C 打不到 RPC，必须等满 `RPC_TIMEOUT`（默认 30 秒）才继续，多台 Worker 时表现为“卡死”；异常 RPC 进程现在会在超时后 5 秒被强制回收。
+- 显式 `-w` 指定的 Worker 现在也会先做 5 秒 RPC 预检，不可达主机在输入 `yes` 前就会列出失败，不再逐台等待 30 秒。
+- 远程目录准备改为 10 秒超时；`patchfiles` 已存在时只做目录检查，不再重复 `mkdir/chmod`，避免远端挂载点异常时卡住。超时会明确提示检查远端目录、网络和 `aio-speedd` 的 6611 端口。
+- `lib/common.sh` 1.0.1：公共 RPC 封装同步修复，其他使用 `aio_rpc_exec` 的工具也支持 Ctrl-C 立即中断。
 
 ### v2.2.1 (2026-10-16)
 
