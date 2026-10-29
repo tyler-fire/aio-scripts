@@ -4,7 +4,7 @@
 
 set -e
 
-VERSION="2.2.2"
+VERSION="2.2.3"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUTPUT_FILE="$SCRIPT_DIR/aio-scripts.install"
 OUTPUT_TMP="$OUTPUT_FILE.tmp.$$"
@@ -305,7 +305,14 @@ if [[ "$publish" =~ ^[Yy]$ ]]; then
 
     # 2. 创建新 Release
     echo "  创建新 Release v${VERSION}..."
-RELEASE_BODY="## 本次更新（v2.2.2）
+RELEASE_BODY="## 本次更新（v2.2.3）
+
+- **File 推送交互优化（aio-file-push.sh 1.2.0）** - 帮助和交互提示改为中文，明确支持多个文件和通配符。
+- **批量文件展示** - 匹配文件后只显示文件数量和总大小，不再逐个列出路径，避免目录文件很多时刷屏。
+- **交互简化** - Worker 提示改为“选择 Worker（逗号分隔或 all）”；确认改为 `[Y/n]`，直接回车即推送。
+- **实测** - 已在 Server 本机和实际 Worker 上验证单文件、通配符多文件推送及 SHA256 校验。
+
+## v2.2.2 主要变更（往期）
 
 - **File 推送卡住修复（重要）** - RPC 调用改用 \`timeout --foreground --kill-after\`。此前 \`timeout\` 把 RPC 放进独立进程组，终端 Ctrl-C 无法立即打断，必须等满 30 秒；现在 Ctrl-C 立即退出，异常 RPC 进程 5 秒后被强制回收。
 - **aio-file-push.sh 1.1.1** - 显式 \`-w\` 指定的 Worker 也会先做 5 秒 RPC 预检，不可达主机在上传确认前直接列失败；远程目录准备改为 10 秒超时，已存在目录只检查不 \`chmod\`，避免远端挂载点异常时卡住。
@@ -364,6 +371,7 @@ bash /opt/aio/ps_scripts/aio-tools.sh
 - check_aiopool_usage.py 1.2.0: 接入公共库；退出清理临时文件
 - aio-tools.sh 1.3.1: 日志收集范围提示改英文关键字(all/failed)，非法输入报错不再静默降级
 - aio-tools.sh 1.3.0: 全部交互输入启用 readline；接入公共库
+- aio-file-push.sh 1.2.0: 帮助和交互改中文；支持多文件/通配符；匹配文件仅显示数量和总大小；确认改为 [Y/n]
 - aio-file-push.sh 1.1.1: RPC 可被 Ctrl-C 立即中断；显式 Worker 增加 5 秒预检
 - aio-file-push.sh 1.1.0: 接入公共库；交互输入启用 readline
 - aio-fsdeamon-cleanup.sh 1.5.1: 交互输入启用 readline；RPC 路径走公共库

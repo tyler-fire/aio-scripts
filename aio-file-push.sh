@@ -1,5 +1,6 @@
 #!/bin/bash
-# 版本: 1.1.1
+# 版本: 1.2.0
+# v1.2.0: 帮助和交互提示改为中文；匹配文件只显示数量和总大小；确认改为 [Y/n]
 # v1.1.1: RPC 调用使用 timeout --foreground --kill-after，Ctrl-C 可立即中断；
 #         显式 -w 指定的 Worker 也做 5 秒快速预检；
 #         已存在的 patchfiles 目录只检查不 chmod，避免远端挂载点卡住
@@ -42,22 +43,29 @@ RPC_BIN="${RPC_BIN:-$(aio_rpc_bin)}"
 
 usage() {
     cat <<'EOF'
-Usage:
-  aio-file-push.sh [options] [file_or_glob ...]
+AIO 文件推送工具
 
-Options:
-  -f  Local file path or glob. Can be specified multiple times.
-  -w  Worker IP/host list, comma separated. If omitted, query workers from MySQL.
-  -a  Push to all reachable workers without selection.
-  -h  Show this help.
+用法:
+  aio-file-push.sh [选项] [文件或通配符 ...]
 
-Destination:
-  /opt/aio/ps_scripts/patchfiles/
+选项:
+  -f <文件/通配符>  指定文件或通配符，可重复使用
+  -w <Worker列表>   指定 Worker IP/主机名，逗号分隔
+  -a                推送到全部可达 Worker
+  -h                显示帮助
 
-Examples:
+说明:
+  - 支持多个文件、多个通配符。
+  - 所有文件推送到 Worker 的:
+      /opt/aio/ps_scripts/patchfiles/
+  - 远端同名文件会被覆盖。
+  - 推送后自动校验 SHA256。
+
+示例:
   aio-file-push.sh
   aio-file-push.sh -f '/opt/aio/user_tmp/*.enc'
-  aio-file-push.sh -f /opt/aio/user_tmp/patch.tar.gz -w 10.7.16.217
+  aio-file-push.sh -f /tmp/a.enc -f /tmp/b.tar.gz -w 10.7.16.217
+  aio-file-push.sh -w 10.7.16.217 /tmp/a.enc /tmp/b.tar.gz
 EOF
 }
 
@@ -161,15 +169,14 @@ choose_workers_interactive() {
     local workers_file="$1"
     local selected valid num
     echo >&2
-    echo "Worker list" >&2
+    echo "Worker 列表" >&2
     printf "  %-4s %-18s %-8s %s\n" "NO" "WORKER" "STATUS" "MESSAGE" >&2
     awk -F '\t' '{printf "  [%d]  %-18s %-8s %s\n", NR, $2, $1, $3}' "$workers_file" >&2
     echo >&2
-    echo "Enter worker numbers separated by comma, or 'all'." >&2
     while true; do
-        read -rep "Select workers: " selected
+        read -rep "选择 Worker（逗号分隔或 all）: " selected
         selected="$(echo "$selected" | tr -d '[:space:]')"
-        [[ -n "$selected" ]] || { echo "ERROR: selection is required" >&2; continue; }
+        [[ -n "$selected" ]] || { echo "请选择 Worker" >&2; continue; }
         if [[ "$selected" == "all" || "$selected" == "ALL" ]]; then
             awk -F '\t' '$1 == "OK" {print $2}' "$workers_file"
             return
@@ -195,7 +202,7 @@ choose_workers_interactive() {
             return
         fi
         rm -f "$LOCAL_TMP_ROOT/patch_selected_workers.$$"
-        echo "ERROR: invalid selection" >&2
+        echo "选择无效，请重试" >&2
     done
 }
 
@@ -223,7 +230,7 @@ collect_target_workers() {
     fi
 
     workers="$(discover_workers || true)"
-    read -rep "Extra worker IP/host not in MySQL, comma separated (Enter=none): " manual_workers
+    read -rep "其他 Worker（可选，逗号分隔）: " manual_workers
     {
         printf '%s\n' "$workers"
         if [[ -n "${manual_workers:-}" ]]; then
@@ -316,15 +323,22 @@ collect_patch_files() {
     rm -f "$LOCAL_TMP_ROOT/patch_files.$$"
 }
 
-print_local_files() {
-    local file size
-    printf "  %-4s %-10s %s\n" "NO" "SIZE" "FILE"
-    local i=0
+print_local_file_summary() {
+    local file size total=0 human
     for file in "${PATCH_FILES[@]}"; do
-        i=$((i + 1))
-        size="$(ls -lh "$file" | awk '{print $5}')"
-        printf "  [%d]  %-10s %s\n" "$i" "$size" "$file"
+        size="$(stat -c %s -- "$file" 2>/dev/null || echo 0)"
+        [[ "$size" =~ ^[0-9]+$ ]] || size=0
+        total=$((total + size))
     done
+    human="$(awk -v b="$total" '
+        BEGIN {
+            split("B K M G T P", u, " ")
+            i = 1
+            while (b >= 1024 && i < 6) { b /= 1024; i++ }
+            if (i == 1) printf "%.0f%s", b, u[i]
+            else printf "%.1f%s", b, u[i]
+        }')"
+    echo "匹配 ${#PATCH_FILES[@]} 个文件，共 ${human}"
 }
 
 prepare_remote_dir() {
@@ -406,7 +420,7 @@ fi
 ensure_local_tmp
 
 if (( ${#PATCH_INPUTS[@]} == 0 )); then
-    read -rep "Local file path or glob, separated by spaces: " input_line
+    read -rep "文件/通配符（多个用空格分隔）: " input_line
     read -r -a PATCH_INPUTS <<< "$input_line"
 fi
 
@@ -423,21 +437,20 @@ if (( ${#TARGETS[@]} == 0 )); then
 fi
 
 echo
-echo "AIO file push"
-echo "Destination: $PATCH_DIR"
-echo "Overwrite:   yes"
-echo "Files:"
-print_local_files
+echo "AIO 文件推送"
+echo "目标目录:   $PATCH_DIR"
+echo "同名覆盖:   是"
+print_local_file_summary
 echo
-echo "Workers:"
+echo "Worker:"
 printf "  %s\n" "${TARGETS[@]}"
 echo
-read -rep "Type yes to upload these files: " confirm
+read -rep "确认推送? [Y/n]: " confirm
 confirm="$(trim_value "$confirm")"
-if [[ "$confirm" != "yes" ]]; then
-    echo "Cancelled. No files uploaded."
-    exit 0
-fi
+case "$confirm" in
+    ""|y|Y|yes|YES) ;;
+    *) echo "已取消，未上传文件。"; exit 0 ;;
+esac
 
 result_file="$LOCAL_TMP_ROOT/patch_push_result.$$"
 : > "$result_file"

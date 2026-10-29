@@ -14,7 +14,7 @@ bash aio-scripts.install
 也可以使用 Release 包：
 
 ```bash
-wget https://github.com/tyler-fire/aio-scripts/releases/download/v2.2.2/aio-scripts.install
+wget https://github.com/tyler-fire/aio-scripts/releases/download/v2.2.3/aio-scripts.install
 bash aio-scripts.install
 ```
 
@@ -82,9 +82,13 @@ File 推送：
 bash /opt/aio/ps_scripts/aio-tools.sh
 # 选择 9) File推送
 
-# 或直接执行，支持单文件和通配符
+# 或直接执行，支持多个文件和通配符
 bash /opt/aio/ps_scripts/aio-file-push.sh -f '/opt/aio/user_tmp/*.enc'
+bash /opt/aio/ps_scripts/aio-file-push.sh -f /tmp/a.enc -f /tmp/b.tar.gz -w 10.7.16.217
 bash /opt/aio/ps_scripts/aio-file-push.sh -f /opt/aio/user_tmp/patch.tar.gz -w 10.7.16.217
+
+# 交互模式只需输入文件/通配符，多个用空格分隔；匹配后显示数量与总大小
+bash /opt/aio/ps_scripts/aio-file-push.sh
 ```
 
 多主机版本收集：
@@ -103,8 +107,8 @@ bash /opt/aio/ps_scripts/aio-collect-v.sh '10.7.16.217,10.7.16.66'
 
 ## 版本信息
 
-- 当前版本: **2.2.2**
-- 发布日期: 2026-10-21
+- 当前版本: **2.2.3**
+- 发布日期: 2026-10-29
 
 ## 开发约定
 
@@ -115,6 +119,13 @@ bash /opt/aio/ps_scripts/aio-collect-v.sh '10.7.16.217,10.7.16.66'
 - 远端命令/SQL 中拼接主机名前必须过 `aio_valid_host` / `aio_common.valid_host`。
 
 ## 更新日志
+
+### v2.2.3 (2026-10-29)
+
+- `aio-file-push.sh` 1.2.0：帮助和交互提示改为中文，明确支持多个文件和通配符。
+- 交互输入改为“文件/通配符（多个用空格分隔）”；匹配后只显示文件数量和总大小，不再逐个列出路径，避免大量文件刷屏。
+- Worker 选择提示改为“选择 Worker（逗号分隔或 all）”，确认改为 `[Y/n]`，直接回车即推送。
+- 已在 Server 本机和实际 Worker 上验证单文件、通配符多文件推送及 SHA256 校验。
 
 ### v2.2.2 (2026-10-21)
 
