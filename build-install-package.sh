@@ -307,11 +307,11 @@ if [[ "$publish" =~ ^[Yy]$ ]]; then
     echo "  创建新 Release v${VERSION}..."
 RELEASE_BODY="## 本次更新（v2.2.4）
 
-- **fsdeamon 清理按备份计划处理（aio-fsdeamon-cleanup.sh 1.7.2）** - 同一数据源有多个监控目录时使用 `del-trackup` 只删指定目录；只有一个目录或选择 `all` 时才使用 `del-source`。
-- **清理前检查** - 显示 fsdeamon 启动时间、当前进程数，并按 `2 + 数据源数` 给出预期值；不一致时显示差值并要求确认。
-- **删除参数与结果复核** - 活动源同时传 `--source-name` 和 `--source`；删除后复查 `online/offline/stale/absent`，失效记录残留不再误报完成。
-- **源端提示** - 删除后提示登录源端核对 `/etc/fsbackup`，并给出 `fsbackup_tools ioctl monitor del <path>` 兜底命令。
-- **边界说明** - 不重启 fsdeamon、不修改 `.context`，也不自动删除源端目录；失效记录单独提示。
+- **fsdeamon 清理按备份计划处理（aio-fsdeamon-cleanup.sh 1.7.2）** - 同一数据源有多个监控目录时使用 \`del-trackup\` 只删指定目录；只有一个目录或选择 \`all\` 时才使用 \`del-source\`。
+- **清理前检查** - 显示 fsdeamon 启动时间、当前进程数，并按 \`2 + 数据源数\` 给出预期值；不一致时显示差值并要求确认。
+- **删除参数与结果复核** - 活动源同时传 \`--source-name\` 和 \`--source\`；删除后复查 \`online/offline/stale/absent\`，失效记录残留不再误报完成。
+- **源端提示** - 删除后提示登录源端核对 \`/etc/fsbackup\`，并给出 \`fsbackup_tools ioctl monitor del <path>\` 兜底命令。
+- **边界说明** - 不重启 fsdeamon、不修改 \`.context\`，也不自动删除源端目录；失效记录单独提示。
 - **菜单文案（aio-tools.sh 1.3.3）** - 改为“清理 Worker 侧数据源/监控目录（不删源端目录）”。
 
 ## v2.2.3 主要变更（往期）
