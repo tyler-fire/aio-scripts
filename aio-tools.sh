@@ -1,6 +1,7 @@
 #!/bin/bash
-# 版本: 1.3.1
+# 版本: 1.3.3
 # AIO 运维工具集入口
+# v1.3.3: fsdeamon 菜单文案明确包含 Worker 侧数据源记录与监控目录清理
 # v1.3.0: 交互输入启用 readline（read -e），退格/中文编辑不再乱码；
 #         RPC 路径、公共函数统一走 lib/common.sh
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -71,7 +72,7 @@ show_menu() {
     echo "  1) 日志收集    - 根据任务ID收集日志(回车=failed仅失败子任务, 输入all收全部)"
     echo "  2) 任务完整分析包 - 收集任务整体信息，供Log分析平台分析"
     echo "  3) 性能分析    - Worker性能趋势(基于sar数据)"
-    echo "  4) fsdeamon清理 - 清理fsdeamon残留挂载和进程"
+    echo "  4) fsdeamon清理 - 清理Worker侧数据源/监控目录(不删源端目录)"
     echo "  5) 任务解锁    - 将卡住的running任务标记为failed"
     echo "  6) 版本收集    - 自动发现或输入多个Worker/Agent IP"
     echo "  7) 存储检查    - 检查Worker的aiopool磁盘空间"

@@ -14,7 +14,7 @@ bash aio-scripts.install
 也可以使用 Release 包：
 
 ```bash
-wget https://github.com/tyler-fire/aio-scripts/releases/download/v2.2.3/aio-scripts.install
+wget https://github.com/tyler-fire/aio-scripts/releases/download/v2.2.4/aio-scripts.install
 bash aio-scripts.install
 ```
 
@@ -34,7 +34,7 @@ bash aio-scripts.install
 | **aio-worker-performance.py** | Worker 性能分析 |
 | **aio-collect-logs.py** | 按任务 ID 定向收集阶段日志 |
 | **aio-unlock-tasks.py** | 任务解锁工具 |
-| **aio-fsdeamon-cleanup.sh** | fsdeamon 清理工具 |
+| **aio-fsdeamon-cleanup.sh** | fsdeamon 数据源/监控目录清理、Offline 失效记录识别、重复实例检查 |
 | **check_aiopool_usage.py** | aiopool 空间检查 |
 | **aio-collect-v.sh** | 版本信息收集 |
 | **aio-collect-hang-logs.sh** | 按主机和时间窗口收集异常日志 |
@@ -107,8 +107,8 @@ bash /opt/aio/ps_scripts/aio-collect-v.sh '10.7.16.217,10.7.16.66'
 
 ## 版本信息
 
-- 当前版本: **2.2.3**
-- 发布日期: 2026-10-29
+- 当前版本: **2.2.4**
+- 发布日期: 2026-10-31
 
 ## 开发约定
 
@@ -119,6 +119,18 @@ bash /opt/aio/ps_scripts/aio-collect-v.sh '10.7.16.217,10.7.16.66'
 - 远端命令/SQL 中拼接主机名前必须过 `aio_valid_host` / `aio_common.valid_host`。
 
 ## 更新日志
+
+### v2.2.4 (2026-10-31)
+
+- `aio-fsdeamon-cleanup.sh` 1.7.2：统一使用“失效记录”表述，不再使用旧术语。
+- `aio-fsdeamon-cleanup.sh` 1.7.1：进程数与 `2 + 数据源数` 不一致时显示差值并要求确认；日志出现 `host:-port:0`/`InitDeamonData failed` 时提示 `.context` 残留。
+- `aio-fsdeamon-cleanup.sh` 1.7.0：按备份计划清理；同一数据源有多个监控目录时使用 `del-trackup`，单目录或整源使用 `del-source`；显示进程数/启动时间并提示源端核对。
+- `aio-fsdeamon-cleanup.sh` 1.6.3：区分活动数据源与 `Offline` 失效记录；残留不再显示“完成/重启会清掉”，明确由 fsdeamon 内部维护。
+- 正常活动源删除同时传 `--source-name=UUID` 和 `--source=IP:6611`；child 已失效时回退 UUID-only 清理。
+- 删除按 `Online -> Offline(失效记录) -> absent` 异步轮询；有地址的失效记录优先用 UUID+原地址清理，实测仅 UUID 可能返回 true 但不移除记录。
+- 清理前检查顶层 `fsdeamon` 实例；检测到多套实例时告警并要求确认，避免两套进程共享 data-path 造成状态污染。
+- 单实例但由 SSH 会话启动时给出提示；删除后复查 `online/offline/stale/absent`，不再只按 UUID 是否存在判断。
+- `aio-tools.sh` 1.3.3：菜单项 4 改为“清理 Worker 侧数据源/监控目录（不删源端目录）”。
 
 ### v2.2.3 (2026-10-29)
 
